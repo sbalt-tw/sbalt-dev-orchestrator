@@ -1,0 +1,19 @@
+node_modules/
+dist/
+coverage/
+
+# Local durable state — never committed. Workflow state is machine-local.
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+.dev-orch/
+
+# Local secrets and operator config
+.env
+.env.local
+config/policy.yaml
+config/projects.local.*
+
+.DS_Store
+*.log
