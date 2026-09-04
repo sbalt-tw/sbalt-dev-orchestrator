@@ -1,0 +1,70 @@
+# SBALT Dev Orchestrator — example policy.
+#
+# Copy to config/policy.yaml and edit. The local copy is gitignored so each
+# operator can differ without touching the committed example.
+#
+# The parser is strict: an unknown key is an error rather than a silently
+# ignored setting, because a typo in a gate name must never read as "no gate".
+
+review:
+  # Completed verdict rounds allowed before the budget is exhausted.
+  standardMaxRounds: 3
+  highRiskMaxRounds: 5
+  # A review stops early when it finds nothing at or above these counts.
+  stopWhen:
+    blocker: 0
+    high: 0
+  # A review killed by infrastructure produced no verdict, so by default it does
+  # not consume a round. Set true only if you want infrastructure flakiness to
+  # count against the work.
+  infraAbortConsumesRound: false
+
+lanes:
+  defaultMaxActiveImplementationPrs: 1
+
+workers:
+  # Worker count is runtime configuration, not architecture. Raise or lower it
+  # freely; the scheduler decides which READY tasks actually get a worker.
+  maxConcurrent: 3
+  # A worker lease older than this with no heartbeat is treated as stale on the
+  # next tick and its task is moved to BLOCKED_INFRA rather than assumed done.
+  leaseTtlMs: 900000
+
+remoteWrites:
+  staging: founderRequired
+  production: founderRequired
+
+destructiveOperations:
+  founderRequired: true
+
+merge:
+  # Phase 0 ships no auto-merge. Every merge waits for a Founder decision.
+  default: founderRequired
+  # Reserved for future risk-based auto-merge; ignored in Phase 0.
+  byRiskClass: {}
+
+# Logical scarce resources. Capacity is independent of worker count: ten workers
+# and one codex slot means nine workers do something else.
+#
+# How a resource is enforced outside this process is a project adapter concern.
+# A project that guards its reviewer with a lock file maps that file onto the
+# logical `codex` resource; the lock is not the architecture.
+resources:
+  - name: codex
+    capacity: 1
+  - name: docker-heavy
+    capacity: 1
+  - name: ios-simulator
+    capacity: 1
+  - name: repo-final-rebase
+    capacity: 1
+  - name: staging-write
+    capacity: 1
+    founderAuthorizationRequired: true
+  - name: production-write
+    capacity: 1
+    founderAuthorizationRequired: true
+
+selfHosting:
+  # The orchestrator does not develop itself. See docs/architecture.md.
+  enabled: false
