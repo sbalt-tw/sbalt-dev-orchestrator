@@ -242,13 +242,20 @@ export class StateEngine {
       };
     }
     const pre = this.store.getPreInfraState(input.taskId);
-    const target: TaskState =
-      pre === 'WAITING_REVIEW' || pre === 'WAITING_CI' || pre === 'REVIEW_FIX' || pre === 'FOUNDER_DECISION'
-        ? pre
-        : 'QUEUED';
-    if (target === 'FOUNDER_DECISION') {
-      return { ok: true, target, note: 'recovered to the founder gate it was interrupted at' };
+    // A gate can be answered while the task sits in BLOCKED_INFRA. Returning it
+    // to FOUNDER_DECISION with nothing left to resolve would strand it: no
+    // outstanding row to answer, and no route out. Honour the answer instead.
+    if (pre === 'FOUNDER_DECISION') {
+      const decisions = this.store.listFounderDecisions({ taskId: input.taskId });
+      const continuation = continuationFor(decisions);
+      return {
+        ok: true,
+        target: continuation.target,
+        note: `recovered through the founder gate: ${continuation.reason}`,
+      };
     }
+    const target: TaskState =
+      pre === 'WAITING_REVIEW' || pre === 'WAITING_CI' || pre === 'REVIEW_FIX' ? pre : 'QUEUED';
     return {
       ok: true,
       target,

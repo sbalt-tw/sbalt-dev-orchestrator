@@ -108,7 +108,7 @@ describe('state machine', () => {
       question: 'q',
       provenance: 'test',
     });
-    h.orch.store.setFounderDecisionState(decision.id, 'RESOLVED', 'yes', 'READY');
+    h.orch.store.setFounderDecisionState(decision.id, 'RESOLVED', 'yes', 'READY', 'APPROVED');
 
     const resolved = h.orch.engine.apply({
       taskId: task.id,
@@ -136,7 +136,7 @@ describe('state machine', () => {
       provenance: 'test',
     });
     // The Founder said READY; the caller asks for READY_TO_MERGE.
-    h.orch.store.setFounderDecisionState(decision.id, 'RESOLVED', 'yes', 'READY');
+    h.orch.store.setFounderDecisionState(decision.id, 'RESOLVED', 'yes', 'READY', 'APPROVED');
 
     const result = h.orch.engine.apply({
       taskId: task.id,

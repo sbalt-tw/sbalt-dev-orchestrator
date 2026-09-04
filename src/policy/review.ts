@@ -86,9 +86,14 @@ export function cleanAtCurrentHead(
   policy: Policy,
 ): boolean {
   if (!task.prHeadSha) return false;
-  return attempts.some(
-    (a) => a.headSha === task.prHeadSha && isCleanVerdict(a, policy),
+  // The *latest* verdict at this head, not any of them. Asking whether some
+  // clean verdict exists meant a later reviewer finding a blocker at the same
+  // commit could not take back the earlier all-clear.
+  const atHead = attempts.filter(
+    (a) => a.headSha === task.prHeadSha && a.status === 'COMPLETED_VERDICT',
   );
+  const latest = atHead[atHead.length - 1];
+  return latest !== undefined && isCleanVerdict(latest, policy);
 }
 
 export type VerdictOutcome =

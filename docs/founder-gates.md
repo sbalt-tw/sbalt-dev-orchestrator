@@ -38,6 +38,32 @@ Phase 0 ships **no auto-merge**. `merge.byRiskClass` exists so a future phase
 has somewhere to put risk-based rules, and is constrained to the same literal
 today so it cannot be mistaken for a working override.
 
+## Answering a decision
+
+`outcome` is required and has no default — at the API and at the CLI:
+
+```bash
+dev-orch decision resolve <id> --resolution "..." --outcome APPROVED|DENIED|CANCELLED
+```
+
+Defaulting it to `APPROVED` meant a caller who simply omitted the argument
+granted authority, while the resolution text said the opposite. A `RESOLVED`
+decision with no outcome is refused by the store and by a database CHECK that
+says `IS NOT NULL` explicitly, because `outcome IN (...)` against NULL evaluates
+to NULL and SQLite accepts a CHECK that evaluates to NULL.
+
+## Waits are separate
+
+A task can pass through the gate more than once. Each decision records the
+**episode** it belongs to: a wait continues while anything is unanswered, and
+the next request after everything is answered starts a new one.
+
+Gate evaluation and continuation both look only at the latest episode. Without
+that, an answer given once kept deciding later questions — a budget extension
+granted in one wait routed every future merge approval back to rework, and
+re-approving could not break the loop. It also means a fresh request is how a
+Founder revisits something previously refused.
+
 ## How a set of decisions is read
 
 Gate evaluation is deterministic and order-independent, because "whichever row
@@ -103,7 +129,9 @@ constraint:
   is marked `legacy_unknown`, which matches no decision category and therefore
   can never be authorised. Guessing a category would be worse than refusing:
   labelling an unknown gate `production_write` would let a production approval
-  authorise something that actually guarded a rollback;
+  authorise something that actually guarded a rollback. Loading policy does not
+  clear that mark either — a gate an ordinary config sync can remove is not a
+  gate — so recategorising one is a deliberate, audited act;
 - `staging-write` and `production-write` are gated **by name**, whatever the
   configuration says, so one forgotten line cannot remove the production gate.
 

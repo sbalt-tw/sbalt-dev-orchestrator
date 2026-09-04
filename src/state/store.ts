@@ -863,6 +863,24 @@ export class Store {
 
   // -------------------------------------------------------- founder decisions
 
+  /**
+   * The episode a new decision on this task belongs to.
+   *
+   * A wait continues while anything is unanswered; once everything has been
+   * answered, the next decision starts a new one.
+   */
+  private nextEpisodeFor(taskId: string | null): number {
+    if (!taskId) return 1;
+    const open = this.db
+      .prepare("SELECT episode FROM founder_decisions WHERE task_id = ? AND state = 'REQUIRED' ORDER BY episode DESC LIMIT 1")
+      .get(taskId) as { episode: number } | undefined;
+    if (open) return open.episode;
+    const last = this.db
+      .prepare('SELECT COALESCE(MAX(episode), 0) AS m FROM founder_decisions WHERE task_id = ?')
+      .get(taskId) as { m: number };
+    return last.m + 1;
+  }
+
   createFounderDecision(input: {
     taskId: string | null;
     category: FounderDecisionCategory;
@@ -876,6 +894,7 @@ export class Store {
       question: input.question,
       state: 'REQUIRED',
       outcome: null,
+      episode: this.nextEpisodeFor(input.taskId),
       resolution: null,
       resolvedTarget: null,
       provenance: input.provenance,
@@ -884,8 +903,8 @@ export class Store {
     };
     this.db
       .prepare(
-        `INSERT INTO founder_decisions (id, task_id, category, question, state, resolution, provenance, created_at, resolved_at)
-         VALUES (?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO founder_decisions (id, task_id, category, question, state, resolution, episode, provenance, created_at, resolved_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         decision.id,
@@ -894,6 +913,7 @@ export class Store {
         decision.question,
         decision.state,
         decision.resolution,
+        decision.episode,
         decision.provenance,
         decision.createdAt,
         decision.resolvedAt,
@@ -913,6 +933,7 @@ export class Store {
     resolved_at: string | null;
     resolved_target: string | null;
     outcome: string | null;
+    episode: number;
   }): FounderDecision {
     return {
       id: row.id,
@@ -921,6 +942,7 @@ export class Store {
       question: row.question,
       state: row.state as FounderDecisionState,
       outcome: (row.outcome as FounderDecisionOutcome | null) ?? null,
+      episode: row.episode,
       resolution: row.resolution,
       resolvedTarget: row.resolved_target ? assertTaskState(row.resolved_target) : null,
       provenance: row.provenance,
@@ -988,13 +1010,22 @@ export class Store {
     return rows.map((r) => this.mapFounderDecision(r));
   }
 
+  /**
+   * Set a decision's lifecycle state.
+   *
+   * A RESOLVED decision must name its outcome. Defaulting it to APPROVED meant
+   * a caller that simply forgot the argument silently granted authority.
+   */
   setFounderDecisionState(
     id: string,
     state: FounderDecisionState,
     resolution: string | null,
     resolvedTarget: TaskState | null = null,
-    outcome: FounderDecisionOutcome | null = state === 'RESOLVED' ? 'APPROVED' : null,
+    outcome: FounderDecisionOutcome | null = null,
   ): void {
+    if (state === 'RESOLVED' && outcome === null) {
+      throw new Error(`decision ${id}: a RESOLVED decision must record an outcome`);
+    }
     this.db
       .prepare(
         'UPDATE founder_decisions SET state = ?, outcome = ?, resolution = ?, resolved_target = ?, resolved_at = ? WHERE id = ?',

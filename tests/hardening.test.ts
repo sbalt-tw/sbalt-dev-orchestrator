@@ -399,7 +399,7 @@ describe('review budget escalation is actionable', () => {
     const first = open[0];
     expect(first).toBeDefined();
     if (first) {
-      h.orch.resolveFounderDecision(first.id, 'one more round');
+      h.orch.resolveFounderDecision(first.id, 'one more round', 'APPROVED');
       expect(h.orch.store.requireTask(task.id).state).toBe('REVIEW_FIX');
     }
     h.orch.close();
@@ -508,13 +508,13 @@ describe('round-2 escapes stay closed', () => {
 
     const first = open[0];
     expect(first).toBeDefined();
-    if (first) h.orch.resolveFounderDecision(first.id, 'approved');
+    if (first) h.orch.resolveFounderDecision(first.id, 'approved', 'APPROVED');
     // One gate open still means the task is gated.
     expect(h.orch.store.requireTask(task.id).state).toBe('FOUNDER_DECISION');
 
     const second = h.orch.store.listFounderDecisions({ taskId: task.id, state: 'REQUIRED' })[0];
     expect(second).toBeDefined();
-    if (second) h.orch.resolveFounderDecision(second.id, 'approved');
+    if (second) h.orch.resolveFounderDecision(second.id, 'approved', 'APPROVED');
     expect(h.orch.store.requireTask(task.id).state).not.toBe('FOUNDER_DECISION');
     h.orch.close();
   });
@@ -569,13 +569,13 @@ describe('round-2 escapes stay closed', () => {
     h.orch.close();
   });
 
-  it('applies migration 2 to a database created under migration 1', () => {
+  it('applies every pending migration to a fresh database', () => {
     const dbPath = tmpDbPath();
     const h = makeHarness({ dbPath });
     const applied = h.orch.store.db
       .prepare('SELECT version FROM schema_migrations ORDER BY version')
       .all() as Array<{ version: number }>;
-    expect(applied.map((r) => r.version)).toEqual([1, 2]);
+    expect(applied.map((r) => r.version)).toEqual([1, 2, 3]);
     // The constraint from migration 2 is live.
     const task = h.orch.store.createTask({ laneId: h.laneId, title: 't', taskType: 'DOCS' });
     expect(() =>

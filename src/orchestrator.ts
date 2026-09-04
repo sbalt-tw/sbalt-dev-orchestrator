@@ -184,10 +184,17 @@ export class Orchestrator {
           reason: null,
           payload: report,
         });
-        return {
-          accepted: true,
-          applied: this.applyReport(authorised.task, report, authorised.leaseId),
-        };
+        const applied = this.applyReport(authorised.task, report, authorised.leaseId);
+        // Every component of a report has to land. Committing an accepted
+        // report whose transition was refused let a late blocking verdict be
+        // recorded while the task stayed merge-ready.
+        const refused = applied.find((a) => !a.result.ok);
+        if (refused) {
+          throw new ReportProducedNoTransition(
+            `report component ${refused.event} was refused: ${refused.result.ok ? '' : refused.result.reason}`,
+          );
+        }
+        return { accepted: true, applied };
       });
     } catch (err) {
       if (err instanceof ReportRejected || err instanceof ReportProducedNoTransition) {
@@ -231,6 +238,17 @@ export class Orchestrator {
 
     const lease = this.store.getActiveWorkerLeaseForTask(task.id);
     const holdsLease = lease !== null && lease.workerId === report.workerId;
+
+    if (lease && new Date(lease.expiresAt).getTime() <= this.store.nowDate().getTime()) {
+      // The lease has run out but no tick has reconciled it yet. Accepting the
+      // report here would let a worker the system has already given up on
+      // change state, and would close the lease so reconciliation never records
+      // that it expired.
+      return {
+        ok: false,
+        reason: `lease for task ${task.id} expired at ${lease.expiresAt}; report refused pending reconciliation`,
+      };
+    }
 
     const carriesOutcome =
       report.pr !== undefined ||
@@ -354,15 +372,35 @@ export class Orchestrator {
       });
 
       if (report.review.status === 'COMPLETED_VERDICT') {
-        applied.push({
-          event: 'CODEX_VERDICT',
-          result: this.engine.apply({
-            taskId: task.id,
+        const current = this.store.requireTask(task.id);
+        if (current.state === 'READY_TO_MERGE') {
+          // A verdict arriving after the task was judged merge-ready. If it is
+          // clean the task is already where it should be; if it is not, the
+          // task goes back for rework rather than staying merge-ready with a
+          // blocking finding recorded against it.
+          const blocking = report.review.blocker > 0 || report.review.high > 0;
+          if (blocking) {
+            applied.push({
+              event: 'REVIEW_FIX_REQUIRED',
+              result: this.engine.apply({
+                taskId: task.id,
+                event: 'REVIEW_FIX_REQUIRED',
+                actor,
+                payload: { reviewAttemptId: attempt.id, blocker: report.review.blocker, high: report.review.high },
+              }),
+            });
+          }
+        } else {
+          applied.push({
             event: 'CODEX_VERDICT',
-            actor,
-            payload: { reviewAttemptId: attempt.id },
-          }),
-        });
+            result: this.engine.apply({
+              taskId: task.id,
+              event: 'CODEX_VERDICT',
+              actor,
+              payload: { reviewAttemptId: attempt.id },
+            }),
+          });
+        }
       } else if (report.review.status === 'INFRA_ABORTED') {
         // Recorded, but it buys no progress and costs no round.
         applied.push({
@@ -480,11 +518,18 @@ export class Orchestrator {
    * Resolve a decision and, when the task is parked in FOUNDER_DECISION, move
    * it on. A decision only ever unblocks the task it belongs to.
    */
+  /**
+   * Record what the Founder decided.
+   *
+   * `outcome` is required and has no default. Defaulting it to APPROVED meant a
+   * caller that omitted it — including the CLI — granted authority while the
+   * recorded text said the opposite.
+   */
   resolveFounderDecision(
     decisionId: string,
     resolution: string,
+    outcome: FounderDecisionOutcome,
     target?: TaskState,
-    outcome: FounderDecisionOutcome = 'APPROVED',
   ): { ok: boolean; reason?: string; transition?: ApplyResult } {
     // Read and write inside one immediate transaction, and claim the decision
     // with a conditional update. Reading REQUIRED outside the transaction let

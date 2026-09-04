@@ -197,7 +197,7 @@ CREATE INDEX idx_worker_reports_task ON worker_reports(task_id);
 -- rebuilt: create the constrained shape, copy, drop, rename, recreate indexes.
 
 -- Foreign keys are disabled by the runner around this transaction, and
--- foreign_key_check runs before the commit. A PRAGMA here would be ignored.
+-- foreign_key_check runs before the commit.
 
 -- ------------------------------------------------------------------- lanes
 CREATE TABLE lanes_new (
@@ -301,24 +301,16 @@ CREATE TABLE resources_new (
   name             TEXT PRIMARY KEY,
   capacity         INTEGER NOT NULL CHECK (capacity >= 0),
   founder_required INTEGER NOT NULL DEFAULT 0 CHECK (founder_required IN (0,1)),
-  -- 'legacy_unknown' is deliberately not a decision category. A resource
-  -- carrying it can never be authorised, because no decision can ever match it.
-  founder_category TEXT CHECK (founder_category IS NULL OR founder_category IN ('architecture_change','product_semantics_change','review_budget_extension','staging_write','production_write','destructive_operation','rollback','merge','legacy_unknown')),
+  founder_category TEXT CHECK (founder_category IS NULL OR founder_category IN ('architecture_change','product_semantics_change','review_budget_extension','staging_write','production_write','destructive_operation','rollback','merge')),
   CHECK ((founder_required = 1 AND founder_category IS NOT NULL)
       OR (founder_required = 0 AND founder_category IS NULL))
 );
--- A v1 gated resource records no category. Inventing one would be a security
--- guess: assigning 'production_write' to a row that actually guarded a
--- destructive operation would let a production approval authorise a rollback.
--- Only the two names whose meaning is fixed are mapped; every other gated
--- resource becomes 'legacy_unknown' and cannot be leased until an operator
--- states what it guards.
 INSERT INTO resources_new (name, capacity, founder_required, founder_category)
 SELECT name, capacity, founder_required,
        CASE
          WHEN name = 'staging-write' THEN 'staging_write'
          WHEN name = 'production-write' THEN 'production_write'
-         WHEN founder_required = 1 THEN 'legacy_unknown'
+         WHEN founder_required = 1 THEN 'production_write'
          ELSE NULL
        END
 FROM resources;
@@ -371,37 +363,121 @@ CREATE TABLE founder_decisions_new (
   task_id     TEXT REFERENCES tasks(id),
   category    TEXT NOT NULL CHECK (category IN ('architecture_change','product_semantics_change','review_budget_extension','staging_write','production_write','destructive_operation','rollback','merge')),
   question    TEXT NOT NULL,
-  state       TEXT NOT NULL CHECK (state IN ('REQUIRED','RESOLVED','WITHDRAWN')),
-  -- What the Founder actually decided. Authorization is read from here, never
-  -- from the mere fact that a row reached RESOLVED: an approval and a refusal
-  -- are both resolutions, and treating them alike let a denial authorise work.
-  outcome     TEXT CHECK (
-                (state = 'REQUIRED'  AND outcome IS NULL) OR
-                (state = 'WITHDRAWN' AND outcome IS NULL) OR
-                (state = 'RESOLVED'  AND outcome IN ('APPROVED','DENIED','CANCELLED'))
-              ),
+  state       TEXT NOT NULL CHECK (state IN ('REQUIRED','RESOLVED','REJECTED','WITHDRAWN')),
   resolution  TEXT,
-  -- What the answer asked for, kept for the audit trail. The engine does not
-  -- take the destination from a single row; see StateEngine.
+  -- Where the Founder's answer sends the task. Recorded at resolution time so
+  -- the engine derives the destination from the decision rather than trusting
+  -- whatever a caller asks for.
   resolved_target TEXT CHECK (resolved_target IS NULL OR resolved_target IN ('QUEUED','READY','REVIEW_FIX','READY_TO_MERGE','BLOCKED_POLICY','CANCELLED')),
   provenance  TEXT NOT NULL,
   created_at  TEXT NOT NULL,
   resolved_at TEXT
 );
--- A v1 row that reached RESOLVED carries no record of what was decided. It is
--- migrated as an explicit APPROVED only where the original code could only have
--- meant approval; anything else becomes WITHDRAWN, which authorises nothing.
-INSERT INTO founder_decisions_new (id, task_id, category, question, state, outcome, resolution, resolved_target, provenance, created_at, resolved_at)
-SELECT id, task_id, category, question,
-       CASE WHEN state IN ('REQUIRED','RESOLVED','WITHDRAWN') THEN state ELSE 'WITHDRAWN' END,
-       CASE WHEN state = 'RESOLVED' THEN 'APPROVED' ELSE NULL END,
-       resolution, NULL, provenance, created_at, resolved_at
-FROM founder_decisions;
+INSERT INTO founder_decisions_new (id, task_id, category, question, state, resolution, resolved_target, provenance, created_at, resolved_at)
+SELECT id, task_id, category, question, state, resolution, NULL, provenance, created_at, resolved_at FROM founder_decisions;
 DROP TABLE founder_decisions;
 ALTER TABLE founder_decisions_new RENAME TO founder_decisions;
 CREATE INDEX idx_founder_decisions_task  ON founder_decisions(task_id);
 CREATE INDEX idx_founder_decisions_state ON founder_decisions(state);
 
+`,
+  },
+  {
+    version: 3,
+    name: 'explicit_decision_outcomes_and_failclosed_legacy_gates',
+    rebuildsTables: true,
+    sql: `
+-- Version 2 shipped before this. Editing it in place would have been invisible
+-- to any database that already recorded version 2 as applied, which is the same
+-- mistake version 2 itself was written to avoid — so the corrections live here.
+--
+-- Two things are wrong in a version-2 database and are fixed below.
+--
+-- 1. A decision recorded only that it was RESOLVED. An approval and a refusal
+--    were stored identically, so a refusal authorised the gate it refused. An
+--    explicit outcome column is added, and — because a version-1 or version-2
+--    row carries no record of what was actually decided — every pre-existing
+--    resolution is migrated to WITHDRAWN rather than guessed at. Work that was
+--    genuinely approved must be approved again; inventing consent from a row
+--    that never recorded it is the one outcome that cannot be undone.
+--
+-- 2. Version 2 relabelled every unrecognised gated resource 'production_write'.
+--    That would let a production approval authorise something that actually
+--    guarded a rollback. Those rows become 'legacy_unknown', which matches no
+--    decision category and therefore cannot be authorised at all.
+
+-- ------------------------------------------------------- founder_decisions
+CREATE TABLE founder_decisions_v3 (
+  id          TEXT PRIMARY KEY,
+  task_id     TEXT REFERENCES tasks(id),
+  category    TEXT NOT NULL CHECK (category IN ('architecture_change','product_semantics_change','review_budget_extension','staging_write','production_write','destructive_operation','rollback','merge')),
+  question    TEXT NOT NULL,
+  state       TEXT NOT NULL CHECK (state IN ('REQUIRED','RESOLVED','WITHDRAWN')),
+  -- Note the explicit IS NOT NULL. Without it, 'outcome IN (...)' against NULL
+  -- evaluates to NULL, and SQLite accepts a CHECK that evaluates to NULL — so a
+  -- RESOLVED row with no outcome would have passed, and code that reads the
+  -- absence of a refusal as approval would have let it through.
+  outcome     TEXT CHECK (
+                (state = 'REQUIRED'  AND outcome IS NULL) OR
+                (state = 'WITHDRAWN' AND outcome IS NULL) OR
+                (state = 'RESOLVED'  AND outcome IS NOT NULL
+                                     AND outcome IN ('APPROVED','DENIED','CANCELLED'))
+              ),
+  resolution  TEXT,
+  resolved_target TEXT CHECK (resolved_target IS NULL OR resolved_target IN ('QUEUED','READY','REVIEW_FIX','READY_TO_MERGE','BLOCKED_POLICY','CANCELLED')),
+  -- Which wait this decision belongs to. Gate evaluation looks only at the
+  -- latest episode for a category, so an answer given during one wait cannot
+  -- silently decide a later, unrelated one.
+  episode     INTEGER NOT NULL DEFAULT 1 CHECK (episode > 0),
+  provenance  TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  resolved_at TEXT
+);
+INSERT INTO founder_decisions_v3 (id, task_id, category, question, state, outcome, resolution, resolved_target, episode, provenance, created_at, resolved_at)
+SELECT id, task_id, category, question,
+       CASE WHEN state = 'REQUIRED' THEN 'REQUIRED' ELSE 'WITHDRAWN' END,
+       NULL,
+       resolution,
+       NULL,
+       1,
+       provenance, created_at,
+       CASE WHEN state = 'REQUIRED' THEN NULL ELSE resolved_at END
+FROM founder_decisions;
+DROP TABLE founder_decisions;
+ALTER TABLE founder_decisions_v3 RENAME TO founder_decisions;
+CREATE INDEX idx_founder_decisions_task  ON founder_decisions(task_id);
+CREATE INDEX idx_founder_decisions_state ON founder_decisions(state);
+
+-- --------------------------------------------------------------- resources
+CREATE TABLE resources_v3 (
+  name             TEXT PRIMARY KEY,
+  capacity         INTEGER NOT NULL CHECK (capacity >= 0),
+  founder_required INTEGER NOT NULL DEFAULT 0 CHECK (founder_required IN (0,1)),
+  -- 'legacy_unknown' is deliberately not a decision category: a resource
+  -- carrying it can never be authorised, because no decision can ever match it.
+  founder_category TEXT CHECK (founder_category IS NULL OR founder_category IN ('architecture_change','product_semantics_change','review_budget_extension','staging_write','production_write','destructive_operation','rollback','merge','legacy_unknown')),
+  CHECK ((founder_required = 1 AND founder_category IS NOT NULL)
+      OR (founder_required = 0 AND founder_category IS NULL))
+);
+INSERT INTO resources_v3 (name, capacity, founder_required, founder_category)
+SELECT name, capacity, founder_required,
+       CASE
+         WHEN name = 'staging-write' THEN 'staging_write'
+         WHEN name = 'production-write' THEN 'production_write'
+         WHEN founder_required = 1 THEN 'legacy_unknown'
+         ELSE NULL
+       END
+FROM resources;
+DROP TABLE resources;
+ALTER TABLE resources_v3 RENAME TO resources;
+
+-- resource_leases referenced the old resources table by name; recreate its
+-- indexes so the rename leaves the schema exactly as a fresh database has it.
+DROP INDEX IF EXISTS idx_resource_leases_resource;
+DROP INDEX IF EXISTS idx_resource_leases_one_active_per_task_resource;
+CREATE INDEX idx_resource_leases_resource ON resource_leases(resource_name, status);
+CREATE UNIQUE INDEX idx_resource_leases_one_active_per_task_resource
+  ON resource_leases(resource_name, task_id) WHERE status = 'ACTIVE';
 `,
   },
 ];

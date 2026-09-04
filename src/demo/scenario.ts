@@ -213,7 +213,7 @@ export async function runDemo(): Promise<DemoResult> {
   );
   say(`recorded founder decision ${decisionId} -> A=${orch.store.requireTask(taskA.id).state}`);
 
-  orch.resolveFounderDecision(decisionId, 'approved by Founder');
+  orch.resolveFounderDecision(decisionId, 'approved by Founder', 'APPROVED');
   say(`founder resolved the decision -> A=${orch.store.requireTask(taskA.id).state}`);
 
   const merged = orch.engine.apply({ taskId: taskA.id, event: 'MERGED', actor: 'demo' });

@@ -99,7 +99,16 @@ its author is not entitled to say what it says:
   decision request — must come from the worker **currently holding the task's
   lease**;
 - review and CI results describe something that happened elsewhere, so they need
-  a registered worker but not the lease.
+  a registered worker but not the lease;
+- a lease that has passed its expiry is not authority. A report arriving after
+  the TTL but before the next tick is refused, so a worker the system has
+  already given up on cannot change state — and so reconciliation still gets to
+  record that the lease expired.
+
+Every component of a report has to land. If any transition it implies is
+refused, the whole report is rolled back and recorded as rejected; committing an
+accepted report whose transition failed let a late blocking verdict be filed
+while the task stayed merge-ready.
 
 That last asymmetry is a Phase-0 simplification. A real deployment wants a
 separate authenticated contract for review and CI results rather than accepting

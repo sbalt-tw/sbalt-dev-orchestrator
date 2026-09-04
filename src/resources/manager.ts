@@ -17,7 +17,7 @@
  */
 
 import type {
-  FounderDecisionCategory,
+  ResourceGateCategory,
   ResourceDefinition,
   ResourceLease,
   Task,
@@ -45,7 +45,7 @@ export type AcquireResult =
  * missing flag on `production-write` cannot quietly remove the production gate.
  * Anything else uses its declared category.
  */
-function gateCategoryFor(def: ResourceDefinition): FounderDecisionCategory | null {
+function gateCategoryFor(def: ResourceDefinition): ResourceGateCategory | null {
   const forced = REMOTE_WRITE_RESOURCE_CATEGORIES[def.name];
   if (forced) return forced;
   return def.founderCategory;
@@ -66,7 +66,39 @@ export class ResourceManager {
    */
   syncDefinitions(): void {
     for (const def of this.policy.resources) {
+      const existing = this.store.getResource(def.name);
       const forced = REMOTE_WRITE_RESOURCE_CATEGORIES[def.name];
+
+      // A gate that a routine sync can remove is not a gate. A resource
+      // inherited from an older database carries 'legacy_unknown' precisely
+      // because nobody has said what it guards; letting an ordinary policy file
+      // quietly turn it into an ungated resource would undo that protection.
+      if (existing?.founderCategory === 'legacy_unknown') {
+        // Policy cannot express 'legacy_unknown', so whatever it says about
+        // this resource's gate is necessarily a downgrade. Record that it was
+        // ignored rather than applying it.
+        this.store.appendEvent({
+          taskId: null,
+          eventType: 'RESOURCE_LEGACY_GATE_PRESERVED',
+          actor: 'resource-manager',
+          payload: {
+            resource: def.name,
+            ignored: {
+              founderAuthorizationRequired: def.founderAuthorizationRequired,
+              founderCategory: def.founderCategory,
+            },
+          },
+        });
+        // Capacity may still be tuned; the gate may not.
+        this.store.upsertResource({
+          name: def.name,
+          capacity: def.capacity,
+          founderAuthorizationRequired: true,
+          founderCategory: 'legacy_unknown',
+        });
+        continue;
+      }
+
       this.store.upsertResource({
         name: def.name,
         capacity: def.capacity,
@@ -132,6 +164,16 @@ export class ResourceManager {
           ok: false,
           reason: 'MISCONFIGURED_RESOURCE',
           detail: `${def.name} is founder-gated but declares no authorising category`,
+        };
+      }
+      if (category === 'legacy_unknown') {
+        // Nothing can authorise this: no decision may carry the category, by
+        // construction. That is the point — the gate's purpose was never
+        // recorded, so it stays shut until someone says what it guards.
+        return {
+          ok: false,
+          reason: 'FOUNDER_AUTHORIZATION_REQUIRED',
+          detail: `${def.name} carries an unrecorded legacy gate; recategorise it before it can be leased`,
         };
       }
       const gate = checkGate(this.store, this.policy, input.task, category);

@@ -66,7 +66,7 @@ describe('Founder Gate', () => {
       question: 'apply to production?',
       provenance: 'test',
     });
-    h.orch.store.setFounderDecisionState(decision.id, 'RESOLVED', 'approved');
+    h.orch.store.setFounderDecisionState(decision.id, 'RESOLVED', 'approved', 'READY', 'APPROVED');
 
     const result = h.orch.tick();
 
@@ -109,7 +109,7 @@ describe('Founder Gate', () => {
       question: 'apply to production?',
       provenance: 'test',
     });
-    h.orch.store.setFounderDecisionState(decision.id, 'RESOLVED', 'approved');
+    h.orch.store.setFounderDecisionState(decision.id, 'RESOLVED', 'approved', 'READY', 'APPROVED');
 
     const gateForOther = checkGate(
       h.orch.store,
@@ -135,7 +135,7 @@ describe('Founder Gate', () => {
       question: 'merge?',
       provenance: 'test',
     });
-    h.orch.store.setFounderDecisionState(decision.id, 'RESOLVED', 'approved');
+    h.orch.store.setFounderDecisionState(decision.id, 'RESOLVED', 'approved', 'READY', 'APPROVED');
 
     const production = checkGate(
       h.orch.store,
@@ -185,7 +185,7 @@ describe('Founder Gate', () => {
     expect(h.orch.store.requireTask(task.id).state).toBe('READY_TO_MERGE');
 
     const decisionId = h.orch.requireFounderDecision(task.id, 'merge', 'merge it?');
-    h.orch.resolveFounderDecision(decisionId, 'approved');
+    h.orch.resolveFounderDecision(decisionId, 'approved', 'APPROVED');
     const merged = h.orch.engine.apply({ taskId: task.id, event: 'MERGED', actor: 'test' });
 
     expect(merged.ok).toBe(true);
@@ -201,8 +201,8 @@ describe('Founder Gate', () => {
       taskType: 'IMPLEMENTATION',
     });
     const id = h.orch.requireFounderDecision(task.id, 'architecture_change', 'change it?');
-    expect(h.orch.resolveFounderDecision(id, 'yes').ok).toBe(true);
-    const second = h.orch.resolveFounderDecision(id, 'yes again');
+    expect(h.orch.resolveFounderDecision(id, 'yes', 'APPROVED').ok).toBe(true);
+    const second = h.orch.resolveFounderDecision(id, 'yes again', 'APPROVED');
     expect(second.ok).toBe(false);
     h.orch.close();
   });

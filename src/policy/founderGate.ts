@@ -57,12 +57,28 @@ function evaluateCategory(
   taskId: string,
   category: FounderDecisionCategory,
 ): { authorised: boolean; reason: string; decisionId: string | null } {
-  const relevant = decisions.filter((d) => d.taskId === taskId && d.category === category);
+  const forCategory = decisions.filter((d) => d.taskId === taskId && d.category === category);
+  if (forCategory.length === 0) {
+    return { authorised: false, reason: `no approved founder decision for ${category}`, decisionId: null };
+  }
+  // Only the most recent wait counts. An answer given during an earlier wait
+  // should not keep deciding later ones, and a fresh request is how a Founder
+  // revisits something they previously refused.
+  const episode = Math.max(...forCategory.map((d) => d.episode));
+  const relevant = forCategory.filter((d) => d.episode === episode);
   const denied = relevant.find((d) => d.state === 'RESOLVED' && d.outcome === 'DENIED');
   if (denied) {
     return { authorised: false, reason: `decision ${denied.id} denied ${category}`, decisionId: denied.id };
   }
   const cancelled = relevant.find((d) => d.state === 'RESOLVED' && d.outcome === 'CANCELLED');
+  const ambiguous = relevant.find((d) => d.state === 'RESOLVED' && d.outcome === null);
+  if (ambiguous) {
+    return {
+      authorised: false,
+      reason: `decision ${ambiguous.id} is resolved but records no outcome; refusing to guess`,
+      decisionId: ambiguous.id,
+    };
+  }
   const approved = relevant.find((d) => d.state === 'RESOLVED' && d.outcome === 'APPROVED');
   if (approved) {
     return { authorised: true, reason: `decision ${approved.id} approved ${category}`, decisionId: approved.id };
@@ -126,7 +142,18 @@ export function checkGate(
 export function continuationFor(
   decisions: readonly FounderDecision[],
 ): { target: 'BLOCKED_POLICY' | 'CANCELLED' | 'READY' | 'REVIEW_FIX' | 'READY_TO_MERGE'; reason: string } {
-  const resolved = decisions.filter((d) => d.state === 'RESOLVED');
+  // Only the current wait. Reading every decision the task ever had meant an
+  // approval granted long ago kept steering later ones — a past budget
+  // extension would route every future merge approval back to rework, and no
+  // amount of re-approving could break the loop.
+  const episodes = decisions.map((d) => d.episode);
+  const current = episodes.length > 0 ? Math.max(...episodes) : 1;
+  const inEpisode = decisions.filter((d) => d.episode === current);
+  const resolved = inEpisode.filter((d) => d.state === 'RESOLVED');
+  const ambiguous = resolved.find((d) => d.outcome === null);
+  if (ambiguous) {
+    return { target: 'BLOCKED_POLICY', reason: `decision ${ambiguous.id} records no outcome` };
+  }
   const denied = resolved.find((d) => d.outcome === 'DENIED');
   if (denied) {
     return { target: 'BLOCKED_POLICY', reason: `decision ${denied.id} denied ${denied.category}` };

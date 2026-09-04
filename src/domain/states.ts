@@ -157,7 +157,21 @@ export const ALLOWED_TRANSITIONS: Readonly<
     // FOUNDER_DECISION is included because a task interrupted while waiting
     // for a human must come back still waiting for that human. Recovery
     // restores where the work was; it never clears an authorisation.
-    RECOVERED: ['QUEUED', 'READY', 'REVIEW_FIX', 'WAITING_REVIEW', 'WAITING_CI', 'FOUNDER_DECISION'],
+    // Every state a recovery can legitimately land on. FOUNDER_DECISION is
+    // here so an interruption cannot clear a pending gate; the decision
+    // outcomes are here so a gate answered while the task was blocked can
+    // still be honoured on the way out.
+    RECOVERED: [
+      'QUEUED',
+      'READY',
+      'REVIEW_FIX',
+      'WAITING_REVIEW',
+      'WAITING_CI',
+      'FOUNDER_DECISION',
+      'READY_TO_MERGE',
+      'BLOCKED_POLICY',
+      'CANCELLED',
+    ],
     FOUNDER_DECISION_REQUIRED: ['FOUNDER_DECISION'],
     TASK_CANCELLED: ['CANCELLED'],
   },

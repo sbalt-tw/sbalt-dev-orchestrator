@@ -144,8 +144,17 @@ export interface ResourceDefinition {
    * lease itself, so the pair is enforced by the policy parser, the resource
    * manager and a database CHECK constraint.
    */
-  founderCategory: FounderDecisionCategory | null;
+  founderCategory: ResourceGateCategory | null;
 }
+
+/**
+ * What a resource's gate points at.
+ *
+ * `legacy_unknown` is deliberately outside FounderDecisionCategory: a resource
+ * inherited from an older database, whose purpose was never recorded, must not
+ * be authorisable by any decision at all.
+ */
+export type ResourceGateCategory = FounderDecisionCategory | 'legacy_unknown';
 
 export interface ResourceLease {
   id: string;
@@ -181,6 +190,15 @@ export interface FounderDecision {
   state: FounderDecisionState;
   /** Null while REQUIRED or WITHDRAWN. Only APPROVED authorises anything. */
   outcome: FounderDecisionOutcome | null;
+  /**
+   * Which wait this decision belongs to.
+   *
+   * A task can pass through the gate more than once. Without an episode, an
+   * answer given during an earlier wait kept deciding later ones: a budget
+   * extension granted once would route every future merge approval back to
+   * rework, forever.
+   */
+  episode: number;
   resolution: string | null;
   /**
    * Where the Founder's answer sends the task.

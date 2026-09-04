@@ -16,6 +16,7 @@ import { MIGRATIONS } from '../src/state/schema.js';
 import { Orchestrator } from '../src/orchestrator.js';
 import { Store } from '../src/state/store.js';
 import { policySchema, defaultPolicy, deepFreeze } from '../src/policy/schema.js';
+import { checkGate } from '../src/policy/founderGate.js';
 import {
   addWorkers,
   baseReport,
@@ -136,7 +137,7 @@ describe('BLOCKER 1 — a populated v1 database upgrades', () => {
     const versions = store.db
       .prepare('SELECT version FROM schema_migrations ORDER BY version')
       .all() as Array<{ version: number }>;
-    expect(versions.map((v) => v.version)).toEqual([1, 2]);
+    expect(versions.map((v) => v.version)).toEqual([1, 2, 3]);
 
     for (const [table, expected] of Object.entries(counts)) {
       const row = store.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
@@ -229,13 +230,30 @@ describe('HIGH 4 — a legacy gated resource fails closed', () => {
     orch.close();
   });
 
-  it('migrates a v1 resolved decision to an explicit outcome', () => {
+  it('migrates a legacy resolution to WITHDRAWN rather than inventing consent', () => {
     const { path } = makePopulatedV1();
     const store = new Store({ dbPath: path });
-    expect(store.getFounderDecision('fd_1')?.outcome).toBe('APPROVED');
+
+    // The v1 row recorded only that it was RESOLVED — never what was decided.
+    // Reading that as approval would manufacture authority nobody granted, so
+    // it is withdrawn and must be asked again.
+    const legacy = store.getFounderDecision('fd_1');
+    expect(legacy?.state).toBe('WITHDRAWN');
+    expect(legacy?.outcome).toBeNull();
+
+    // An unanswered decision survives as an unanswered decision.
     expect(store.getFounderDecision('fd_2')?.state).toBe('REQUIRED');
     expect(store.getFounderDecision('fd_2')?.outcome).toBeNull();
     store.close();
+  });
+
+  it('does not let a withdrawn legacy decision authorise anything', () => {
+    const { path } = makePopulatedV1();
+    const orch = new Orchestrator({ dbPath: path, policy: testPolicy() });
+    const task = orch.store.requireTask('task_3');
+    const gate = checkGate(orch.store, orch.policy, task, 'merge');
+    expect(gate.satisfied).toBe(false);
+    orch.close();
   });
 });
 
@@ -317,8 +335,8 @@ describe('BLOCKER 3 — multiple founder decisions', () => {
     const denied = h.orch.requireFounderDecision(task.id, 'product_semantics_change', 'change meaning?');
     const approved = h.orch.requireFounderDecision(task.id, 'architecture_change', 'change shape?');
 
-    h.orch.resolveFounderDecision(denied, 'no', undefined, 'DENIED');
-    h.orch.resolveFounderDecision(approved, 'yes', undefined, 'APPROVED');
+    h.orch.resolveFounderDecision(denied, 'no', 'DENIED');
+    h.orch.resolveFounderDecision(approved, 'yes', 'APPROVED');
 
     // A refusal anywhere in the set wins, whatever order the answers arrived in.
     expect(h.orch.store.requireTask(task.id).state).toBe('BLOCKED_POLICY');
@@ -329,7 +347,7 @@ describe('BLOCKER 3 — multiple founder decisions', () => {
     const h = makeHarness();
     const task = gatedTask(h);
     const id = h.orch.requireFounderDecision(task.id, 'production_write', 'deploy?');
-    h.orch.resolveFounderDecision(id, 'not now', undefined, 'CANCELLED');
+    h.orch.resolveFounderDecision(id, 'not now', 'CANCELLED');
 
     const gate = h.orch.resources.acquire({
       resourceName: 'production-write',
@@ -345,7 +363,7 @@ describe('BLOCKER 3 — multiple founder decisions', () => {
     const h = makeHarness();
     const task = gatedTask(h);
     const id = h.orch.requireFounderDecision(task.id, 'production_write', 'deploy?');
-    h.orch.resolveFounderDecision(id, 'go ahead', undefined, 'APPROVED');
+    h.orch.resolveFounderDecision(id, 'go ahead', 'APPROVED');
 
     const gate = h.orch.resources.acquire({
       resourceName: 'production-write',
@@ -362,7 +380,7 @@ describe('BLOCKER 3 — multiple founder decisions', () => {
     const first = h.orch.requireFounderDecision(task.id, 'architecture_change', 'a?');
     h.orch.requireFounderDecision(task.id, 'product_semantics_change', 'b?');
 
-    h.orch.resolveFounderDecision(first, 'yes', undefined, 'APPROVED');
+    h.orch.resolveFounderDecision(first, 'yes', 'APPROVED');
 
     expect(h.orch.store.requireTask(task.id).state).toBe('FOUNDER_DECISION');
     h.orch.close();
@@ -373,7 +391,7 @@ describe('BLOCKER 3 — multiple founder decisions', () => {
     const mine = gatedTask(h);
     const other = h.orch.store.createTask({ laneId: h.laneId, title: 'other', taskType: 'IMPLEMENTATION' });
     const id = h.orch.requireFounderDecision(other.id, 'production_write', 'deploy other?');
-    h.orch.resolveFounderDecision(id, 'yes', undefined, 'APPROVED');
+    h.orch.resolveFounderDecision(id, 'yes', 'APPROVED');
 
     const gate = h.orch.resources.acquire({
       resourceName: 'production-write',
@@ -388,7 +406,7 @@ describe('BLOCKER 3 — multiple founder decisions', () => {
     const h = makeHarness();
     const task = gatedTask(h);
     const id = h.orch.requireFounderDecision(task.id, 'merge', 'merge?');
-    h.orch.resolveFounderDecision(id, 'yes', undefined, 'APPROVED');
+    h.orch.resolveFounderDecision(id, 'yes', 'APPROVED');
 
     const gate = h.orch.resources.acquire({
       resourceName: 'production-write',

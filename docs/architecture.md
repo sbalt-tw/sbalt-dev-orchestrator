@@ -67,6 +67,11 @@ Version 1 is never edited. Later versions upgrade in place, because hardening an
 early migration would leave every existing database unconstrained while the code
 claimed otherwise.
 
+Version 2 shipped before version 3 existed. Correcting version 2 in place would
+have been invisible to any database that already recorded it as applied — the
+same mistake version 2 was written to avoid — so its corrections live in
+version 3.
+
 A migration that rebuilds tables sets `rebuildsTables`, and the runner then
 disables foreign keys **around** the transaction — `PRAGMA foreign_keys` is
 ignored inside one — and runs `foreign_key_check` before committing, so a

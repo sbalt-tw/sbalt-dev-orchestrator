@@ -369,15 +369,24 @@ decision
 
 decision
   .command('resolve <id>')
-  .description('resolve a Founder decision (this is the only thing that opens a gate)')
+  .description('answer a Founder decision (an APPROVED outcome is the only thing that opens a gate)')
   .requiredOption('--resolution <text>', 'what was decided')
+  .requiredOption('--outcome <outcome>', `APPROVED | DENIED | CANCELLED`)
   .option('--target <state>', 'explicit next task state')
-  .action((id: string, opts: { resolution: string; target?: string }) => {
+  .action((id: string, opts: { resolution: string; outcome: string; target?: string }) => {
     const orch = openOrchestrator(globals());
+    const outcome = opts.outcome.toUpperCase();
+    if (outcome !== 'APPROVED' && outcome !== 'DENIED' && outcome !== 'CANCELLED') {
+      console.error(`--outcome must be APPROVED, DENIED or CANCELLED (got ${opts.outcome})`);
+      orch.close();
+      process.exitCode = 1;
+      return;
+    }
     const result = orch.resolveFounderDecision(
       id,
       opts.resolution,
-      opts.target as Parameters<Orchestrator['resolveFounderDecision']>[2],
+      outcome,
+      opts.target as Parameters<Orchestrator['resolveFounderDecision']>[3],
     );
     output(globals().json, result, () => {
       if (!result.ok) console.error(`failed: ${result.reason}`);

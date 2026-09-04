@@ -54,8 +54,11 @@ guarantee that a config file can quietly invert is not a guarantee.
 
 ## Merge is anchored to an exact head
 
-`cleanAtCurrentHead()` requires a completed clean verdict whose `headSha` equals
-the task's **current** `prHeadSha`.
+`cleanAtCurrentHead()` looks at the **latest** completed verdict at the task's
+current `prHeadSha`. Asking whether *some* clean verdict existed meant a later
+reviewer finding a blocker at the same commit could not take back the earlier
+all-clear. A blocking verdict arriving after a task is already merge-ready sends
+it back to `REVIEW_FIX`.
 
 A clean verdict on an earlier commit says nothing about the commit that would
 actually be merged. So when a branch moves — a rebase, a fix, a force-push —
