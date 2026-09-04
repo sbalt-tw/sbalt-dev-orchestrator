@@ -17,7 +17,7 @@ import type { TaskState } from './domain/states.js';
 import { StateEngine, type ApplyResult } from './state/engine.js';
 import { Store, type StoreOptions } from './state/store.js';
 import { ResourceManager } from './resources/manager.js';
-import { loadPolicy, type Policy } from './policy/schema.js';
+import { loadPolicy, policySchema, type Policy } from './policy/schema.js';
 import { cleanAtCurrentHead, nextRoundNumber, completedVerdictRounds } from './policy/review.js';
 import { requireDecision } from './policy/founderGate.js';
 import { dependencyStatuses } from './scheduler/dependencies.js';
@@ -34,6 +34,19 @@ export interface OrchestratorOptions extends StoreOptions {
   policyPath?: string;
   coordinator?: Coordinator;
   adapter?: ProjectAdapter;
+}
+
+/**
+ * Thrown when an accepted report turns out to map to no transition at all.
+ *
+ * Rolls the application back so the report is recorded as rejected rather than
+ * silently leaving a task running with nobody on it.
+ */
+class ReportProducedNoTransition extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ReportProducedNoTransition';
+  }
 }
 
 /**
@@ -93,7 +106,10 @@ export class Orchestrator {
 
   constructor(options: OrchestratorOptions = {}) {
     this.store = new Store(options);
-    this.policy = options.policy ?? loadPolicy(options.policyPath);
+    // An injected policy is re-parsed rather than trusted. `Policy` is only a
+    // type: a caller could otherwise hand in an object that opens every gate,
+    // and the literal constraints in the schema would never run.
+    this.policy = options.policy ? policySchema.parse(options.policy) : loadPolicy(options.policyPath);
     this.engine = new StateEngine(this.store, this.policy);
     this.resources = new ResourceManager(this.store, this.policy);
     this.coordinator = options.coordinator ?? new StubCoordinator();
@@ -191,14 +207,34 @@ export class Orchestrator {
       payload: report,
     });
 
-    return {
-      accepted: true,
-      applied: this.store.transaction(() => this.applyReport(task, report, lease?.id ?? null)),
-    };
+    try {
+      return {
+        accepted: true,
+        applied: this.store.transaction(() => this.applyReport(task, report, lease?.id ?? null)),
+      };
+    } catch (err) {
+      if (!(err instanceof ReportProducedNoTransition)) throw err;
+      // The transaction rolled back; record the rejection outside it.
+      this.store.recordWorkerReport({
+        taskId: task.id,
+        workerId: report.workerId,
+        accepted: false,
+        reason: err.message,
+        payload: report,
+      });
+      return { accepted: false, reason: err.message, applied: [] };
+    }
   }
 
+  /**
+   * Hand the compute back — but only the worker that actually held this task.
+   *
+   * Marking `report.workerId` idle unconditionally let a report with someone
+   * else's worker id free a worker that was busy on a different task.
+   */
   private releaseWorker(taskId: string, leaseId: string | null, workerId: string): void {
-    if (leaseId) this.store.closeWorkerLease(leaseId, 'RELEASED');
+    if (!leaseId) return;
+    this.store.closeWorkerLease(leaseId, 'RELEASED');
     this.store.setWorkerStatus(workerId, 'IDLE');
     this.resources.releaseAllForTask(taskId);
   }
@@ -323,14 +359,13 @@ export class Orchestrator {
         question: `Worker flagged an architecture decision on "${task.title}".`,
       });
     }
-    for (const request of decisionRequests) {
-      const current = this.store.requireTask(task.id);
-      const decision = requireDecision(
-        this.store,
-        current,
-        request.category,
-        request.question,
-        actor,
+    if (decisionRequests.length > 0) {
+      // Every requested decision is created first, then the task moves once.
+      // Applying one transition per request meant the second was rejected from
+      // FOUNDER_DECISION while its row still existed, so resolving the first
+      // released the task with the second gate still open.
+      const created = decisionRequests.map((request) =>
+        requireDecision(this.store, this.store.requireTask(task.id), request.category, request.question, actor),
       );
       applied.push({
         event: 'FOUNDER_DECISION_REQUIRED',
@@ -338,7 +373,10 @@ export class Orchestrator {
           taskId: task.id,
           event: 'FOUNDER_DECISION_REQUIRED',
           actor,
-          payload: { category: request.category, decisionId: decision.id },
+          payload: {
+            categories: decisionRequests.map((r) => r.category),
+            decisionIds: created.map((d) => d.id),
+          },
         }),
       });
     }
@@ -351,19 +389,17 @@ export class Orchestrator {
       });
     }
 
-    // Backstop. The worker's lease is gone, so if the task is still RUNNING it
-    // is unreachable by lease-based reconciliation. Rather than leave it
-    // stranded, block it where an operator can see it.
+    // Backstop. If nothing moved the task, the report was meaningless for its
+    // current state. Rolling back is better than inventing an infrastructure
+    // failure: fabricating one would hide a producer bug behind a misleading
+    // diagnosis and leave an operator recovering from an incident that never
+    // happened. The throw discards the release and the report is recorded as
+    // rejected, so the worker keeps its lease and ordinary reconciliation still
+    // applies.
     if (this.store.requireTask(task.id).state === 'RUNNING') {
-      applied.push({
-        event: 'INFRA_FAILURE',
-        result: this.engine.apply({
-          taskId: task.id,
-          event: 'INFRA_FAILURE',
-          actor,
-          payload: { cause: 'accepted report produced no state transition' },
-        }),
-      });
+      throw new ReportProducedNoTransition(
+        `report from ${report.workerId} left task ${task.id} in RUNNING; it maps to no transition`,
+      );
     }
 
     return applied;
@@ -417,6 +453,18 @@ export class Orchestrator {
     resolution: string,
     target?: TaskState,
   ): { ok: boolean; reason?: string; transition?: ApplyResult } {
+    // Read and write inside one immediate transaction, and claim the decision
+    // with a conditional update. Reading REQUIRED outside the transaction let
+    // two resolvers both proceed, the second overwriting the record of the
+    // decision that actually released the task.
+    return this.store.immediateTransaction(() => this.resolveFounderDecisionInner(decisionId, resolution, target));
+  }
+
+  private resolveFounderDecisionInner(
+    decisionId: string,
+    resolution: string,
+    target?: TaskState,
+  ): { ok: boolean; reason?: string; transition?: ApplyResult } {
     const decision = this.store.getFounderDecision(decisionId);
     if (!decision) return { ok: false, reason: `unknown decision ${decisionId}` };
     if (decision.state !== 'REQUIRED') {
@@ -433,27 +481,46 @@ export class Orchestrator {
           : 'READY';
     const resolvedTarget = target ?? defaultTarget;
 
-    return this.store.transaction(() => {
-      this.store.setFounderDecisionState(decisionId, 'RESOLVED', resolution, resolvedTarget);
-      this.store.appendEvent({
-        taskId: decision.taskId,
-        eventType: 'FOUNDER_DECISION_RESOLVED',
-        actor: 'founder',
-        payload: { decisionId, category: decision.category, resolution, resolvedTarget },
-      });
-
-      if (!decision.taskId) return { ok: true };
-      const task = this.store.getTask(decision.taskId);
-      if (!task || task.state !== 'FOUNDER_DECISION') return { ok: true };
-
-      const transition = this.engine.apply({
-        taskId: task.id,
-        event: 'FOUNDER_DECISION_RESOLVED',
-        actor: 'founder',
-        payload: { decisionId },
-      });
-      return { ok: transition.ok, transition, ...(transition.ok ? {} : { reason: transition.reason }) };
+    const claimed = this.store.claimFounderDecision(decisionId, resolution, resolvedTarget);
+    if (!claimed) {
+      return { ok: false, reason: `decision ${decisionId} was resolved by someone else` };
+    }
+    this.store.appendEvent({
+      taskId: decision.taskId,
+      eventType: 'FOUNDER_DECISION_RESOLVED',
+      actor: 'founder',
+      payload: { decisionId, category: decision.category, resolution, resolvedTarget },
     });
+
+    if (!decision.taskId) return { ok: true };
+    const task = this.store.getTask(decision.taskId);
+    if (!task || task.state !== 'FOUNDER_DECISION') return { ok: true };
+
+    // A task may be waiting on more than one decision. It stays parked until
+    // none are outstanding, so resolving one gate cannot release it past
+    // another.
+    const stillOpen = this.store
+      .listFounderDecisions({ taskId: task.id, state: 'REQUIRED' })
+      .filter((d) => d.id !== decisionId);
+    if (stillOpen.length > 0) {
+      this.store.appendEvent({
+        taskId: task.id,
+        eventType: 'FOUNDER_DECISION_STILL_OUTSTANDING',
+        actor: 'founder',
+        fromState: task.state,
+        toState: task.state,
+        payload: { remaining: stillOpen.map((d) => ({ id: d.id, category: d.category })) },
+      });
+      return { ok: true };
+    }
+
+    const transition = this.engine.apply({
+      taskId: task.id,
+      event: 'FOUNDER_DECISION_RESOLVED',
+      actor: 'founder',
+      payload: { decisionId },
+    });
+    return { ok: transition.ok, transition, ...(transition.ok ? {} : { reason: transition.reason }) };
   }
 
   // ---------------------------------------------------------- coordinator

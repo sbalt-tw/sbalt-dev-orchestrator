@@ -152,7 +152,9 @@ export const ALLOWED_TRANSITIONS: Readonly<
     TASK_CANCELLED: ['CANCELLED'],
   },
   BLOCKED_INFRA: {
-    RECOVERED: ['QUEUED', 'READY', 'REVIEW_FIX', 'WAITING_REVIEW'],
+    // Every state INFRA_FAILURE can be entered from must appear here, or a
+    // task interrupted in that state would be permanently unrecoverable.
+    RECOVERED: ['QUEUED', 'READY', 'REVIEW_FIX', 'WAITING_REVIEW', 'WAITING_CI'],
     FOUNDER_DECISION_REQUIRED: ['FOUNDER_DECISION'],
     TASK_CANCELLED: ['CANCELLED'],
   },

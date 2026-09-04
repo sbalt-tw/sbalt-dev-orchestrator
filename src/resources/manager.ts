@@ -105,16 +105,26 @@ export class ResourceManager {
       };
     }
 
-    const held = this.store
-      .listResourceLeasesForTask(input.task.id)
-      .find((l) => l.resourceName === input.resourceName);
-    if (held) {
-      return { ok: true, lease: held, alreadyHeld: true };
-    }
-
+    // Authorisation is checked before anything else, including the
+    // already-held shortcut. Returning an existing lease first meant a task
+    // that acquired a slot before a gate was tightened kept using it.
     const category = gateCategoryFor(def);
-    const gated = def.founderAuthorizationRequired || REMOTE_WRITE_RESOURCE_CATEGORIES[def.name] !== undefined;
+    const gated =
+      def.founderAuthorizationRequired ||
+      def.founderCategory !== null ||
+      REMOTE_WRITE_RESOURCE_CATEGORIES[def.name] !== undefined;
     if (gated) {
+      // A row that names a category without the flag, or carries the flag with
+      // no category, is inconsistent however it got there. Fail closed rather
+      // than pick the reading that grants access.
+      if (def.founderAuthorizationRequired !== (def.founderCategory !== null)
+          && REMOTE_WRITE_RESOURCE_CATEGORIES[def.name] === undefined) {
+        return {
+          ok: false,
+          reason: 'MISCONFIGURED_RESOURCE',
+          detail: `${def.name} has an inconsistent founder gate: required=${def.founderAuthorizationRequired}, category=${def.founderCategory ?? 'none'}`,
+        };
+      }
       if (!category) {
         // Fail closed: a resource that claims to need authorisation but names
         // no category cannot be checked, so it is refused rather than leased.
@@ -132,6 +142,13 @@ export class ResourceManager {
           detail: `${def.name}: ${gate.reason}`,
         };
       }
+    }
+
+    const held = this.store
+      .listResourceLeasesForTask(input.task.id)
+      .find((l) => l.resourceName === input.resourceName);
+    if (held) {
+      return { ok: true, lease: held, alreadyHeld: true };
     }
 
     if (this.store.countActiveResourceLeases(def.name) >= def.capacity) {

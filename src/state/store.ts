@@ -463,11 +463,13 @@ export class Store {
   // -------------------------------------------------------------- dependencies
 
   addDependencyRow(taskId: string, dependsOnTaskId: string, requiredState: TaskState): void {
+    // A required state outside the vocabulary can never be satisfied, so it
+    // would park the dependent task forever. Validated here and by CHECK.
     this.db
       .prepare(
         'INSERT OR REPLACE INTO task_dependencies (task_id, depends_on_task_id, required_state) VALUES (?, ?, ?)',
       )
-      .run(taskId, dependsOnTaskId, requiredState);
+      .run(taskId, dependsOnTaskId, assertTaskState(requiredState));
   }
 
   listDependencies(taskId: string): TaskDependency[] {
@@ -477,7 +479,7 @@ export class Store {
     return rows.map((r) => ({
       taskId: r.task_id,
       dependsOnTaskId: r.depends_on_task_id,
-      requiredState: r.required_state as TaskState,
+      requiredState: assertTaskState(r.required_state),
     }));
   }
 
@@ -490,7 +492,7 @@ export class Store {
     return rows.map((r) => ({
       taskId: r.task_id,
       dependsOnTaskId: r.depends_on_task_id,
-      requiredState: r.required_state as TaskState,
+      requiredState: assertTaskState(r.required_state),
     }));
   }
 
@@ -641,6 +643,11 @@ export class Store {
   // --------------------------------------------------------------- resources
 
   upsertResource(def: ResourceDefinition): void {
+    if (def.founderAuthorizationRequired !== (def.founderCategory !== null)) {
+      throw new Error(
+        `resource '${def.name}': founderAuthorizationRequired and founderCategory must be set together`,
+      );
+    }
     this.db
       .prepare(
         `INSERT INTO resources (name, capacity, founder_required, founder_category) VALUES (?, ?, ?, ?)
@@ -916,6 +923,24 @@ export class Store {
       createdAt: row.created_at,
       resolvedAt: row.resolved_at,
     };
+  }
+
+  /**
+   * Move a decision from REQUIRED to RESOLVED, once.
+   *
+   * The conditional UPDATE is the whole point: two resolvers that both read
+   * REQUIRED would otherwise both write, and the second would overwrite the
+   * record of the decision that actually released the task.
+   */
+  claimFounderDecision(id: string, resolution: string, resolvedTarget: TaskState): boolean {
+    const info = this.db
+      .prepare(
+        `UPDATE founder_decisions
+            SET state = 'RESOLVED', resolution = ?, resolved_target = ?, resolved_at = ?
+          WHERE id = ? AND state = 'REQUIRED'`,
+      )
+      .run(resolution, assertTaskState(resolvedTarget), this.now(), id);
+    return info.changes === 1;
   }
 
   getFounderDecision(id: string): FounderDecision | null {

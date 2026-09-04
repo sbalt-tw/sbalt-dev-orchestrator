@@ -70,7 +70,7 @@ describe('accepted reports always move the task', () => {
     h.orch.close();
   });
 
-  it('never leaves a task RUNNING with its lease released', () => {
+  it('rejects a report that maps to no transition instead of inventing a failure', () => {
     const h = makeHarness();
     addWorkers(h, 1);
     const task = h.orch.store.createTask({
@@ -88,10 +88,54 @@ describe('accepted reports always move the task', () => {
       status: 'NEEDS_REVIEW',
     });
 
-    expect(result.accepted).toBe(true);
-    const after = h.orch.store.requireTask(task.id);
-    expect(after.state).not.toBe('RUNNING');
-    expect(after.state).toBe('BLOCKED_INFRA');
+    // Fabricating an INFRA_FAILURE here would hide a producer bug behind a
+    // misleading diagnosis. The report is rejected and rolled back instead, so
+    // the worker keeps its lease and ordinary reconciliation still applies.
+    expect(result.accepted).toBe(false);
+    expect(h.orch.store.requireTask(task.id).state).toBe('RUNNING');
+    expect(h.orch.store.getActiveWorkerLeaseForTask(task.id)).not.toBeNull();
+    h.orch.close();
+  });
+
+  it('does not free a worker that never held the task', () => {
+    const h = makeHarness({ policy: testPolicy({ workers: { maxConcurrent: 2, leaseTtlMs: 60_000 } }) });
+    addWorkers(h, 2);
+    const a = h.orch.store.createTask({
+      laneId: h.laneId,
+      title: 'task A',
+      taskType: 'DOCS',
+      requiresPr: false,
+      priority: 10,
+    });
+    const b = h.orch.store.createTask({
+      laneId: h.laneId,
+      title: 'task B',
+      taskType: 'IMPLEMENTATION',
+      initialState: 'WAITING_REVIEW',
+    });
+    h.orch.tick();
+    const leaseA = h.orch.store.getActiveWorkerLeaseForTask(a.id);
+    expect(leaseA).not.toBeNull();
+    h.orch.store.updateTaskFields(b.id, { prNumber: 1, prBaseSha: SHA_BASE, prHeadSha: SHA_A });
+
+    // A review report for B naming A's busy worker must not idle that worker.
+    h.orch.submitReport({
+      ...baseReport({ taskId: b.id, laneId: h.laneId, workerId: leaseA?.workerId ?? 'x' }),
+      review: {
+        reviewer: 'codex',
+        round: 1,
+        baseSha: SHA_BASE,
+        headSha: SHA_A,
+        blocker: 0,
+        high: 0,
+        medium: 0,
+        low: 0,
+        status: 'COMPLETED_VERDICT',
+      },
+    });
+
+    expect(h.orch.store.getWorker(leaseA?.workerId ?? '')?.status).toBe('BUSY');
+    expect(h.orch.store.getActiveWorkerLeaseForTask(a.id)).not.toBeNull();
     h.orch.close();
   });
 
@@ -407,5 +451,134 @@ describe('durability of a dispatch', () => {
     expect(restarted.store.listWorkers('BUSY')).toHaveLength(1);
     expect(restarted.store.requireTask(task.id).state).toBe('RUNNING');
     restarted.close();
+  });
+});
+
+describe('round-2 escapes stay closed', () => {
+  it('re-parses an injected policy so a gate cannot be handed in already open', () => {
+    expect(
+      () =>
+        new Orchestrator({
+          dbPath: ':memory:',
+          policy: { merge: { default: 'allowed' } } as never,
+        }),
+    ).toThrow();
+  });
+
+  it('recovers a task interrupted while waiting for CI', () => {
+    const h = makeHarness();
+    const task = h.orch.store.createTask({
+      laneId: h.laneId,
+      title: 'interrupted in CI',
+      taskType: 'IMPLEMENTATION',
+      initialState: 'WAITING_CI',
+    });
+    h.orch.engine.apply({ taskId: task.id, event: 'INFRA_FAILURE', actor: 'test' });
+    const recovered = h.orch.engine.apply({ taskId: task.id, event: 'RECOVERED', actor: 'test' });
+
+    expect(recovered.ok).toBe(true);
+    expect(h.orch.store.requireTask(task.id).state).toBe('WAITING_CI');
+    h.orch.close();
+  });
+
+  it('keeps a task parked while a second decision is still outstanding', () => {
+    const h = makeHarness();
+    addWorkers(h, 1);
+    const task = h.orch.store.createTask({
+      laneId: h.laneId,
+      title: 'two gates',
+      taskType: 'DOCS',
+      requiresPr: false,
+    });
+    h.orch.tick();
+    const lease = h.orch.store.getActiveWorkerLeaseForTask(task.id);
+
+    h.orch.submitReport({
+      ...baseReport({ taskId: task.id, laneId: h.laneId, workerId: lease?.workerId ?? 'x' }),
+      status: 'BLOCKED',
+      architectureDecisionRequired: true,
+      founderDecisionRequired: { category: 'product_semantics_change', question: 'change the meaning?' },
+    });
+
+    const open = h.orch.store.listFounderDecisions({ taskId: task.id, state: 'REQUIRED' });
+    expect(open).toHaveLength(2);
+    expect(h.orch.store.requireTask(task.id).state).toBe('FOUNDER_DECISION');
+
+    const first = open[0];
+    expect(first).toBeDefined();
+    if (first) h.orch.resolveFounderDecision(first.id, 'approved');
+    // One gate open still means the task is gated.
+    expect(h.orch.store.requireTask(task.id).state).toBe('FOUNDER_DECISION');
+
+    const second = h.orch.store.listFounderDecisions({ taskId: task.id, state: 'REQUIRED' })[0];
+    expect(second).toBeDefined();
+    if (second) h.orch.resolveFounderDecision(second.id, 'approved');
+    expect(h.orch.store.requireTask(task.id).state).not.toBe('FOUNDER_DECISION');
+    h.orch.close();
+  });
+
+  it('resolves a decision exactly once', () => {
+    const h = makeHarness();
+    const task = h.orch.store.createTask({
+      laneId: h.laneId,
+      title: 'single claim',
+      taskType: 'IMPLEMENTATION',
+    });
+    const id = h.orch.requireFounderDecision(task.id, 'architecture_change', 'change?');
+
+    expect(h.orch.store.claimFounderDecision(id, 'first', 'READY')).toBe(true);
+    // A second claimant finds nothing left to claim.
+    expect(h.orch.store.claimFounderDecision(id, 'second', 'CANCELLED')).toBe(false);
+    expect(h.orch.store.getFounderDecision(id)?.resolution).toBe('first');
+    h.orch.close();
+  });
+
+  it('refuses to store a resource whose gate flag and category disagree', () => {
+    const h = makeHarness();
+    // The pair is constrained in both directions, so the inconsistent row the
+    // resource manager used to fail closed on cannot be created in the first
+    // place — by the store, or by writing to the table directly.
+    expect(() =>
+      h.orch.store.upsertResource({
+        name: 'odd',
+        capacity: 1,
+        founderAuthorizationRequired: false,
+        founderCategory: 'production_write',
+      }),
+    ).toThrow();
+    expect(() =>
+      h.orch.store.db
+        .prepare('INSERT INTO resources (name, capacity, founder_required, founder_category) VALUES (?,?,?,?)')
+        .run('odd2', 1, 0, 'production_write'),
+    ).toThrow();
+    expect(() =>
+      h.orch.store.db
+        .prepare('INSERT INTO resources (name, capacity, founder_required, founder_category) VALUES (?,?,?,?)')
+        .run('odd3', 1, 1, null),
+    ).toThrow();
+    h.orch.close();
+  });
+
+  it('refuses a dependency on a state that does not exist', () => {
+    const h = makeHarness();
+    const a = h.orch.store.createTask({ laneId: h.laneId, title: 'a', taskType: 'DOCS' });
+    const b = h.orch.store.createTask({ laneId: h.laneId, title: 'b', taskType: 'DOCS' });
+    expect(() => h.orch.store.addDependencyRow(b.id, a.id, 'ALMOST' as never)).toThrow();
+    h.orch.close();
+  });
+
+  it('applies migration 2 to a database created under migration 1', () => {
+    const dbPath = tmpDbPath();
+    const h = makeHarness({ dbPath });
+    const applied = h.orch.store.db
+      .prepare('SELECT version FROM schema_migrations ORDER BY version')
+      .all() as Array<{ version: number }>;
+    expect(applied.map((r) => r.version)).toEqual([1, 2]);
+    // The constraint from migration 2 is live.
+    const task = h.orch.store.createTask({ laneId: h.laneId, title: 't', taskType: 'DOCS' });
+    expect(() =>
+      h.orch.store.db.prepare('UPDATE tasks SET state = ? WHERE id = ?').run('NOPE', task.id),
+    ).toThrow();
+    h.orch.close();
   });
 });

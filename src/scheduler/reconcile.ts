@@ -53,16 +53,23 @@ export function reconcileStaleLeases(
 
   // 1. Expired worker leases. One transaction each, so a crash cannot land
   //    between closing the lease and blocking the task.
-  for (const lease of store.listActiveWorkerLeases()) {
-    if (new Date(lease.expiresAt).getTime() > now.getTime()) continue;
+  for (const candidate of store.listActiveWorkerLeases()) {
+    if (new Date(candidate.expiresAt).getTime() > now.getTime()) continue;
 
-    store.transaction(() => {
+    const acted = store.immediateTransaction(() => {
+      // Re-read inside the transaction. The list was taken outside it, and a
+      // heartbeat between the two would otherwise let reconciliation kill a
+      // lease that had just been renewed.
+      const lease = store.getActiveWorkerLeaseForTask(candidate.taskId);
+      if (!lease || lease.id !== candidate.id) return false;
+      if (new Date(lease.expiresAt).getTime() > now.getTime()) return false;
+
       store.closeWorkerLease(lease.id, 'STALE');
       store.setWorkerStatus(lease.workerId, 'IDLE');
       result.resourcesReleased += resources.releaseAllForTask(lease.taskId);
 
       const task = store.getTask(lease.taskId);
-      if (!task) return;
+      if (!task) return true;
 
       store.appendEvent({
         taskId: task.id,
@@ -82,39 +89,60 @@ export function reconcileStaleLeases(
         });
         if (applied.ok) result.tasksBlocked.push(task.id);
       }
+      return true;
     });
-    result.staleLeases += 1;
+    if (acted) result.staleLeases += 1;
   }
 
   // 2. Tasks left RUNNING with no active lease. These cannot be found by
   //    walking leases, which is exactly why they used to be lost.
-  for (const task of store.listRunningTasksWithoutActiveLease()) {
-    const applied = engine.apply({
-      taskId: task.id,
-      event: 'INFRA_FAILURE',
-      actor: 'reconciler',
-      payload: { cause: 'task is RUNNING with no active worker lease' },
+  for (const candidate of store.listRunningTasksWithoutActiveLease()) {
+    const blocked = store.immediateTransaction(() => {
+      // Re-check: a dispatch committing between the read and here would have
+      // given the task a lease, and blocking it would disrupt healthy work.
+      const task = store.getTask(candidate.id);
+      if (!task || task.state !== 'RUNNING') return false;
+      if (store.getActiveWorkerLeaseForTask(task.id)) return false;
+      return engine.apply({
+        taskId: task.id,
+        event: 'INFRA_FAILURE',
+        actor: 'reconciler',
+        payload: { cause: 'task is RUNNING with no active worker lease' },
+      }).ok;
     });
-    if (applied.ok) {
-      result.orphanedRunningTasks.push(task.id);
-      if (!result.tasksBlocked.includes(task.id)) result.tasksBlocked.push(task.id);
+    if (blocked) {
+      result.orphanedRunningTasks.push(candidate.id);
+      if (!result.tasksBlocked.includes(candidate.id)) result.tasksBlocked.push(candidate.id);
     }
   }
 
   // 3. Scarce slots held by nobody. A resource lease outliving its task's run
   //    would block every other task that needs it, indefinitely.
-  for (const lease of store.listOrphanedResourceLeases()) {
-    store.transaction(() => {
-      store.closeResourceLease(lease.id, 'STALE');
+  for (const candidate of store.listOrphanedResourceLeases()) {
+    const released = store.immediateTransaction(() => {
+      // Re-check inside the transaction so a dispatch that just claimed this
+      // slot is not robbed of it.
+      const task = store.getTask(candidate.taskId);
+      if (!task || task.state === 'RUNNING') return false;
+      if (store.getActiveWorkerLeaseForTask(candidate.taskId)) return false;
+      const held = store
+        .listResourceLeasesForTask(candidate.taskId)
+        .find((l) => l.id === candidate.id);
+      if (!held) return false;
+
+      store.closeResourceLease(candidate.id, 'STALE');
       store.appendEvent({
-        taskId: lease.taskId,
+        taskId: candidate.taskId,
         eventType: 'RESOURCE_LEASE_ORPHANED',
         actor: 'reconciler',
-        payload: { resource: lease.resourceName, leaseId: lease.id },
+        payload: { resource: candidate.resourceName, leaseId: candidate.id },
       });
+      return true;
     });
-    result.orphanedResourceLeases += 1;
-    result.resourcesReleased += 1;
+    if (released) {
+      result.orphanedResourceLeases += 1;
+      result.resourcesReleased += 1;
+    }
   }
 
   return result;
