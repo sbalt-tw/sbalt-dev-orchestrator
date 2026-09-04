@@ -205,6 +205,19 @@ function dispatchOne(
         : { kind: 'skipped', reason: `dependencies unsatisfied: ${applied.reason}` };
     }
 
+    // Defence in depth. The state machine should already keep a gated task out
+    // of READY, but a task must never reach a worker while a decision on it is
+    // unanswered, whatever route it took to get here.
+    const outstanding = store.outstandingDecisions(task.id);
+    if (outstanding.length > 0) {
+      return {
+        kind: 'skipped',
+        reason: `${outstanding.length} founder decision(s) outstanding: ${outstanding
+          .map((d) => d.category)
+          .join(', ')}`,
+      };
+    }
+
     if (store.listActiveWorkerLeases().length >= policy.workers.maxConcurrent) {
       return {
         kind: 'skipped',

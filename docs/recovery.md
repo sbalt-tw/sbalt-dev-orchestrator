@@ -48,6 +48,14 @@ is reachable by walking leases:
 - resource leases held by tasks that are neither running nor leased are
   released.
 
+## Recovery never clears an authorisation
+
+Where a task returns to is derived from what it was doing, and a pending Founder
+Gate outranks all of it. A task interrupted while awaiting a decision comes back
+awaiting the same decision. As defence in depth the scheduler also refuses to
+dispatch any task with an outstanding decision, whatever route it took to reach
+a dispatchable state.
+
 ## Recovery is a decision
 
 A task in `BLOCKED_INFRA` stays there. Ticking again does not re-dispatch it;

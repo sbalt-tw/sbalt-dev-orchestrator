@@ -53,8 +53,18 @@ export const FOUNDER_DECISION_CATEGORIES = [
 ] as const;
 export type FounderDecisionCategory = (typeof FOUNDER_DECISION_CATEGORIES)[number];
 
-export const FOUNDER_DECISION_STATES = ['REQUIRED', 'RESOLVED', 'REJECTED', 'WITHDRAWN'] as const;
+export const FOUNDER_DECISION_STATES = ['REQUIRED', 'RESOLVED', 'WITHDRAWN'] as const;
 export type FounderDecisionState = (typeof FOUNDER_DECISION_STATES)[number];
+
+/**
+ * What the Founder actually decided.
+ *
+ * Kept separate from the lifecycle state because an approval and a refusal are
+ * both resolutions. Reading authorisation from `RESOLVED` alone meant a refusal
+ * opened the gate it was refusing.
+ */
+export const FOUNDER_DECISION_OUTCOMES = ['APPROVED', 'DENIED', 'CANCELLED'] as const;
+export type FounderDecisionOutcome = (typeof FOUNDER_DECISION_OUTCOMES)[number];
 
 export interface Project {
   id: string;
@@ -169,6 +179,8 @@ export interface FounderDecision {
   category: FounderDecisionCategory;
   question: string;
   state: FounderDecisionState;
+  /** Null while REQUIRED or WITHDRAWN. Only APPROVED authorises anything. */
+  outcome: FounderDecisionOutcome | null;
   resolution: string | null;
   /**
    * Where the Founder's answer sends the task.

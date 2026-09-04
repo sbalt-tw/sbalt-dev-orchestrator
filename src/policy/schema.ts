@@ -152,7 +152,32 @@ export const policySchema = z
 
 export type Policy = z.infer<typeof policySchema>;
 
-export const DEFAULT_POLICY: Policy = policySchema.parse({});
+/**
+ * Recursively freeze a validated policy.
+ *
+ * TypeScript's `readonly` disappears at runtime, and the parsed object was
+ * shared with the state engine and the resource manager. Assigning
+ * `policy.merge.default = 'allowed'` after construction was enough to merge
+ * without a decision — validation that happens once and then hands out a
+ * mutable object is not validation.
+ */
+export function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  for (const key of Object.getOwnPropertyNames(value)) {
+    deepFreeze((value as Record<string, unknown>)[key]);
+  }
+  return Object.freeze(value);
+}
+
+/** A frozen policy built from the schema defaults. Never handed out directly. */
+const FROZEN_DEFAULTS: Policy = deepFreeze(policySchema.parse({}));
+
+/** Defaults, as a fresh frozen object so no caller shares one instance. */
+export function defaultPolicy(): Policy {
+  return deepFreeze(policySchema.parse({}));
+}
+
+export const DEFAULT_POLICY: Policy = FROZEN_DEFAULTS;
 
 export class PolicyLoadError extends Error {}
 
@@ -164,7 +189,7 @@ export function parsePolicy(raw: unknown): Policy {
       .join('; ');
     throw new PolicyLoadError(`invalid policy: ${issues}`);
   }
-  return result.data;
+  return deepFreeze(result.data);
 }
 
 /**
@@ -186,5 +211,5 @@ export function loadPolicy(explicitPath?: string): Policy {
     const text = readFileSync(full, 'utf8');
     return parsePolicy(parseYaml(text));
   }
-  return DEFAULT_POLICY;
+  return defaultPolicy();
 }

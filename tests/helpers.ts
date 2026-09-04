@@ -80,6 +80,16 @@ export function addWorkers(h: Harness, n: number): string[] {
   );
 }
 
+/**
+ * Register a worker with a known id.
+ *
+ * Review and CI reports come from a registered worker that need not hold the
+ * task's lease, so tests that submit them have to register one.
+ */
+export function registerReviewer(h: Harness, id: string): string {
+  return h.orch.store.registerWorker({ provider: 'fake', capabilities: ['review'], id }).id;
+}
+
 export function baseReport(fields: {
   taskId: string;
   laneId: string;

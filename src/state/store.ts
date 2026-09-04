@@ -13,6 +13,7 @@ import type {
   CiStatus,
   FounderDecision,
   FounderDecisionCategory,
+  FounderDecisionOutcome,
   FounderDecisionState,
   HistoryEvent,
   Lane,
@@ -874,6 +875,7 @@ export class Store {
       category: input.category,
       question: input.question,
       state: 'REQUIRED',
+      outcome: null,
       resolution: null,
       resolvedTarget: null,
       provenance: input.provenance,
@@ -910,6 +912,7 @@ export class Store {
     created_at: string;
     resolved_at: string | null;
     resolved_target: string | null;
+    outcome: string | null;
   }): FounderDecision {
     return {
       id: row.id,
@@ -917,6 +920,7 @@ export class Store {
       category: row.category as FounderDecisionCategory,
       question: row.question,
       state: row.state as FounderDecisionState,
+      outcome: (row.outcome as FounderDecisionOutcome | null) ?? null,
       resolution: row.resolution,
       resolvedTarget: row.resolved_target ? assertTaskState(row.resolved_target) : null,
       provenance: row.provenance,
@@ -932,15 +936,31 @@ export class Store {
    * REQUIRED would otherwise both write, and the second would overwrite the
    * record of the decision that actually released the task.
    */
-  claimFounderDecision(id: string, resolution: string, resolvedTarget: TaskState): boolean {
+  claimFounderDecision(
+    id: string,
+    resolution: string,
+    outcome: FounderDecisionOutcome,
+    resolvedTarget: TaskState | null,
+  ): boolean {
     const info = this.db
       .prepare(
         `UPDATE founder_decisions
-            SET state = 'RESOLVED', resolution = ?, resolved_target = ?, resolved_at = ?
+            SET state = 'RESOLVED', outcome = ?, resolution = ?, resolved_target = ?, resolved_at = ?
           WHERE id = ? AND state = 'REQUIRED'`,
       )
-      .run(resolution, assertTaskState(resolvedTarget), this.now(), id);
+      .run(
+        outcome,
+        resolution,
+        resolvedTarget === null ? null : assertTaskState(resolvedTarget),
+        this.now(),
+        id,
+      );
     return info.changes === 1;
+  }
+
+  /** Decisions on this task that nobody has answered yet. */
+  outstandingDecisions(taskId: string): FounderDecision[] {
+    return this.listFounderDecisions({ taskId, state: 'REQUIRED' });
   }
 
   getFounderDecision(id: string): FounderDecision | null {
@@ -973,13 +993,15 @@ export class Store {
     state: FounderDecisionState,
     resolution: string | null,
     resolvedTarget: TaskState | null = null,
+    outcome: FounderDecisionOutcome | null = state === 'RESOLVED' ? 'APPROVED' : null,
   ): void {
     this.db
       .prepare(
-        'UPDATE founder_decisions SET state = ?, resolution = ?, resolved_target = ?, resolved_at = ? WHERE id = ?',
+        'UPDATE founder_decisions SET state = ?, outcome = ?, resolution = ?, resolved_target = ?, resolved_at = ? WHERE id = ?',
       )
       .run(
         state,
+        state === 'RESOLVED' ? outcome : null,
         resolution,
         resolvedTarget === null ? null : assertTaskState(resolvedTarget),
         state === 'REQUIRED' ? null : this.now(),

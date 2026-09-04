@@ -61,6 +61,20 @@ durable state, and it does not take anybody's word for anything.
 The core scheduler contains no reference to any specific repository. Everything
 project-shaped arrives through `ProjectAdapter`.
 
+## Migrations
+
+Version 1 is never edited. Later versions upgrade in place, because hardening an
+early migration would leave every existing database unconstrained while the code
+claimed otherwise.
+
+A migration that rebuilds tables sets `rebuildsTables`, and the runner then
+disables foreign keys **around** the transaction — `PRAGMA foreign_keys` is
+ignored inside one — and runs `foreign_key_check` before committing, so a
+migration that would break a reference rolls back instead. This is tested
+against a populated version-1 database, not only a fresh one: an earlier
+migration passed every fresh-database test while failing on any database that
+actually had rows in it.
+
 ## Why SQLite
 
 The workflow database has to survive a crash, be inspectable by a human at 2am,

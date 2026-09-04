@@ -16,7 +16,7 @@ import type { TaskEvent, TaskState } from '../domain/states.js';
 import { allowedTargets, isTerminal } from '../domain/states.js';
 import type { Store } from './store.js';
 import type { Policy } from '../policy/schema.js';
-import { checkGate, requireDecision } from '../policy/founderGate.js';
+import { checkGate, continuationFor, requireDecision } from '../policy/founderGate.js';
 import { classifyVerdict, cleanAtCurrentHead } from '../policy/review.js';
 import { dependenciesSatisfied } from '../scheduler/dependencies.js';
 
@@ -203,13 +203,23 @@ export class StateEngine {
     if (decision.state !== 'RESOLVED') {
       return { ok: false, reason: `founder decision ${decisionId} is ${decision.state}, not RESOLVED` };
     }
-    if (!decision.resolvedTarget) {
-      return { ok: false, reason: `founder decision ${decisionId} recorded no resolved target` };
+
+    const all = this.store.listFounderDecisions({ taskId: input.taskId });
+    const outstanding = all.filter((d) => d.state === 'REQUIRED');
+    if (outstanding.length > 0) {
+      return {
+        ok: false,
+        reason: `${outstanding.length} founder decision(s) still outstanding on this task`,
+      };
     }
+
+    // Derived from every decision on the task, not from the one just answered:
+    // a refusal must not be overridden because an approval was written after it.
+    const continuation = continuationFor(all);
     return {
       ok: true,
-      target: decision.resolvedTarget,
-      note: `${decision.category} decision ${decisionId} resolved`,
+      target: continuation.target,
+      note: `${decision.category} decision ${decisionId} resolved; ${continuation.reason}`,
     };
   }
 
@@ -221,9 +231,24 @@ export class StateEngine {
   private resolveRecoveredTarget(
     input: ApplyEventInput,
   ): { ok: true; target: TaskState; note: string } | { ok: false; reason: string } {
+    // A task still owing a human an answer comes back owing it. Recovery
+    // restores where the work was; it never clears an authorisation, and an
+    // interruption is not a way to escape a gate.
+    if (this.store.outstandingDecisions(input.taskId).length > 0) {
+      return {
+        ok: true,
+        target: 'FOUNDER_DECISION',
+        note: 'recovered still awaiting an unresolved founder decision',
+      };
+    }
     const pre = this.store.getPreInfraState(input.taskId);
     const target: TaskState =
-      pre === 'WAITING_REVIEW' || pre === 'WAITING_CI' || pre === 'REVIEW_FIX' ? pre : 'QUEUED';
+      pre === 'WAITING_REVIEW' || pre === 'WAITING_CI' || pre === 'REVIEW_FIX' || pre === 'FOUNDER_DECISION'
+        ? pre
+        : 'QUEUED';
+    if (target === 'FOUNDER_DECISION') {
+      return { ok: true, target, note: 'recovered to the founder gate it was interrupted at' };
+    }
     return {
       ok: true,
       target,

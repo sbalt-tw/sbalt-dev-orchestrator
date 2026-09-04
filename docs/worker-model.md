@@ -89,10 +89,24 @@ A worker communicates through a `WorkerReport` and nothing else:
 }
 ```
 
-The schema is strict. An unknown key, an unknown status, a missing required
-field, or a report from a worker that does not hold the lease are all rejected,
-and the rejection is recorded in `worker_reports` with its reason. A rejected
-report changes no workflow state.
+The schema is strict, and authorisation happens in the same transaction as the
+application, so nothing it checks can change in between. A report is refused
+when it has an unknown key, an unknown status, a missing required field, or when
+its author is not entitled to say what it says:
+
+- the worker must be **registered**;
+- a report carrying an outcome — a PR, a completion, a failure, a block, a
+  decision request — must come from the worker **currently holding the task's
+  lease**;
+- review and CI results describe something that happened elsewhere, so they need
+  a registered worker but not the lease.
+
+That last asymmetry is a Phase-0 simplification. A real deployment wants a
+separate authenticated contract for review and CI results rather than accepting
+them from any registered worker; it is recorded as follow-up debt.
+
+A rejected report changes no workflow state and leaves exactly one audit row in
+`worker_reports` with its reason.
 
 `summary` exists for humans. The engine never reads it, which is the point: a
 worker cannot advance the workflow by writing a convincing sentence.

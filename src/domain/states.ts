@@ -154,7 +154,10 @@ export const ALLOWED_TRANSITIONS: Readonly<
   BLOCKED_INFRA: {
     // Every state INFRA_FAILURE can be entered from must appear here, or a
     // task interrupted in that state would be permanently unrecoverable.
-    RECOVERED: ['QUEUED', 'READY', 'REVIEW_FIX', 'WAITING_REVIEW', 'WAITING_CI'],
+    // FOUNDER_DECISION is included because a task interrupted while waiting
+    // for a human must come back still waiting for that human. Recovery
+    // restores where the work was; it never clears an authorisation.
+    RECOVERED: ['QUEUED', 'READY', 'REVIEW_FIX', 'WAITING_REVIEW', 'WAITING_CI', 'FOUNDER_DECISION'],
     FOUNDER_DECISION_REQUIRED: ['FOUNDER_DECISION'],
     TASK_CANCELLED: ['CANCELLED'],
   },

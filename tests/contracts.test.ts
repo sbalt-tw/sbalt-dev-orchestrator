@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { addWorkers, baseReport, cleanupTempDirs, makeHarness, SHA_A, SHA_BASE } from './helpers.js';
+import { addWorkers, baseReport, cleanupTempDirs, makeHarness, registerReviewer, SHA_A, SHA_BASE } from './helpers.js';
 import { parseWorkerReport } from '../src/domain/report.js';
 import { parseCoordinatorOutput, validateCoordinatorAction } from '../src/coordinator/validator.js';
 import { StubCoordinator } from '../src/coordinator/stub.js';
@@ -60,13 +60,15 @@ describe('worker report contract', () => {
       requiresPr: false,
     });
     h.orch.tick();
+    registerReviewer(h, 'wk_impostor');
 
-    const result = h.orch.submitReport(
-      baseReport({ taskId: task.id, laneId: h.laneId, workerId: 'wk_impostor' }),
-    );
+    const result = h.orch.submitReport({
+      ...baseReport({ taskId: task.id, laneId: h.laneId, workerId: 'wk_impostor' }),
+      status: 'COMPLETED',
+    });
 
     expect(result.accepted).toBe(false);
-    expect(result.reason).toContain('leased to');
+    expect(result.reason).toContain('may not report its outcome');
     h.orch.close();
   });
 

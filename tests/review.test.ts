@@ -1,10 +1,11 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { cleanupTempDirs, makeHarness, testPolicy, SHA_A, SHA_B, SHA_BASE } from './helpers.js';
+import { cleanupTempDirs, makeHarness, registerReviewer, testPolicy, SHA_A, SHA_B, SHA_BASE } from './helpers.js';
 import { completedVerdictRounds, reviewBudget, cleanAtCurrentHead } from '../src/policy/review.js';
 
 afterAll(cleanupTempDirs);
 
 function reviewTask(h: ReturnType<typeof makeHarness>, head = SHA_A) {
+  registerReviewer(h, 'wk_reviewer');
   const task = h.orch.store.createTask({
     laneId: h.laneId,
     title: 'under review',

@@ -14,6 +14,7 @@ import {
   cleanupTempDirs,
   FakeClock,
   makeHarness,
+  registerReviewer,
   testPolicy,
   tmpDbPath,
   SHA_A,
@@ -365,6 +366,7 @@ describe('review budget escalation is actionable', () => {
     const h = makeHarness({
       policy: testPolicy({ review: { standardMaxRounds: 1, highRiskMaxRounds: 1 } }),
     });
+    registerReviewer(h, 'wk_reviewer');
     const task = h.orch.store.createTask({
       laneId: h.laneId,
       title: 'budget exhausted',
@@ -526,9 +528,9 @@ describe('round-2 escapes stay closed', () => {
     });
     const id = h.orch.requireFounderDecision(task.id, 'architecture_change', 'change?');
 
-    expect(h.orch.store.claimFounderDecision(id, 'first', 'READY')).toBe(true);
+    expect(h.orch.store.claimFounderDecision(id, 'first', 'APPROVED', 'READY')).toBe(true);
     // A second claimant finds nothing left to claim.
-    expect(h.orch.store.claimFounderDecision(id, 'second', 'CANCELLED')).toBe(false);
+    expect(h.orch.store.claimFounderDecision(id, 'second', 'APPROVED', 'CANCELLED')).toBe(false);
     expect(h.orch.store.getFounderDecision(id)?.resolution).toBe('first');
     h.orch.close();
   });

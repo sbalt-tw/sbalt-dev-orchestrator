@@ -97,11 +97,18 @@ Every command accepts `--json`.
 
 ## What is enforced, not merely intended
 
-- **Gated actions need a decision row.** Merging, writing to a remote
-  environment, destructive operations and rollback are all gated by default. A
+- **Gated actions need an approval, not just an answer.** Merging, writing to a
+  remote environment, destructive operations and rollback are all gated. A
   worker that reports `SAFE_TO_MERGE` in prose changes nothing; only a
-  `FounderDecision` in state `RESOLVED`, matching that task and that category,
-  opens the gate. A decision for one task does not authorise another.
+  `FounderDecision` for that task, in that category, resolved with outcome
+  `APPROVED`, opens the gate. A refusal anywhere in a category wins regardless
+  of order, a cancellation is not an approval, and a decision for one task does
+  not authorise another.
+- **An interruption is not a way around a human.** A task interrupted while
+  awaiting a decision comes back still awaiting it, and no task with an
+  outstanding decision is ever dispatched.
+- **Validated policy is frozen.** The parsed policy is deeply immutable, so
+  nothing can widen a budget or open a gate at runtime.
 - **Merge readiness is anchored to an exact head.** A clean verdict on an older
   commit does not make the current commit mergeable.
 - **An infrastructure-killed review costs no round.** Budget exhaustion should

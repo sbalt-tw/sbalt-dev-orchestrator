@@ -16,6 +16,12 @@ export interface Migration {
   version: number;
   name: string;
   sql: string;
+  /**
+   * True when the migration drops and recreates tables. The runner then
+   * disables foreign keys around the transaction and verifies
+   * `foreign_key_check` before committing.
+   */
+  rebuildsTables?: boolean;
 }
 
 export const MIGRATIONS: readonly Migration[] = [
@@ -176,6 +182,7 @@ CREATE INDEX idx_worker_reports_task ON worker_reports(task_id);
   {
     version: 2,
     name: 'constrain_enums_and_deterministic_targets',
+    rebuildsTables: true,
     sql: `
 -- Rebuilds every table that persists an enum so the database itself refuses an
 -- out-of-vocabulary value, and adds the columns that make two multi-target
@@ -189,8 +196,8 @@ CREATE INDEX idx_worker_reports_task ON worker_reports(task_id);
 -- SQLite cannot add a CHECK constraint to an existing table, so each table is
 -- rebuilt: create the constrained shape, copy, drop, rename, recreate indexes.
 
--- defer_foreign_keys works inside a transaction; foreign_keys does not.
-PRAGMA defer_foreign_keys = ON;
+-- Foreign keys are disabled by the runner around this transaction, and
+-- foreign_key_check runs before the commit. A PRAGMA here would be ignored.
 
 -- ------------------------------------------------------------------- lanes
 CREATE TABLE lanes_new (
@@ -294,16 +301,24 @@ CREATE TABLE resources_new (
   name             TEXT PRIMARY KEY,
   capacity         INTEGER NOT NULL CHECK (capacity >= 0),
   founder_required INTEGER NOT NULL DEFAULT 0 CHECK (founder_required IN (0,1)),
-  founder_category TEXT CHECK (founder_category IS NULL OR founder_category IN ('architecture_change','product_semantics_change','review_budget_extension','staging_write','production_write','destructive_operation','rollback','merge')),
+  -- 'legacy_unknown' is deliberately not a decision category. A resource
+  -- carrying it can never be authorised, because no decision can ever match it.
+  founder_category TEXT CHECK (founder_category IS NULL OR founder_category IN ('architecture_change','product_semantics_change','review_budget_extension','staging_write','production_write','destructive_operation','rollback','merge','legacy_unknown')),
   CHECK ((founder_required = 1 AND founder_category IS NOT NULL)
       OR (founder_required = 0 AND founder_category IS NULL))
 );
+-- A v1 gated resource records no category. Inventing one would be a security
+-- guess: assigning 'production_write' to a row that actually guarded a
+-- destructive operation would let a production approval authorise a rollback.
+-- Only the two names whose meaning is fixed are mapped; every other gated
+-- resource becomes 'legacy_unknown' and cannot be leased until an operator
+-- states what it guards.
 INSERT INTO resources_new (name, capacity, founder_required, founder_category)
 SELECT name, capacity, founder_required,
        CASE
          WHEN name = 'staging-write' THEN 'staging_write'
          WHEN name = 'production-write' THEN 'production_write'
-         WHEN founder_required = 1 THEN 'production_write'
+         WHEN founder_required = 1 THEN 'legacy_unknown'
          ELSE NULL
        END
 FROM resources;
@@ -356,18 +371,32 @@ CREATE TABLE founder_decisions_new (
   task_id     TEXT REFERENCES tasks(id),
   category    TEXT NOT NULL CHECK (category IN ('architecture_change','product_semantics_change','review_budget_extension','staging_write','production_write','destructive_operation','rollback','merge')),
   question    TEXT NOT NULL,
-  state       TEXT NOT NULL CHECK (state IN ('REQUIRED','RESOLVED','REJECTED','WITHDRAWN')),
+  state       TEXT NOT NULL CHECK (state IN ('REQUIRED','RESOLVED','WITHDRAWN')),
+  -- What the Founder actually decided. Authorization is read from here, never
+  -- from the mere fact that a row reached RESOLVED: an approval and a refusal
+  -- are both resolutions, and treating them alike let a denial authorise work.
+  outcome     TEXT CHECK (
+                (state = 'REQUIRED'  AND outcome IS NULL) OR
+                (state = 'WITHDRAWN' AND outcome IS NULL) OR
+                (state = 'RESOLVED'  AND outcome IN ('APPROVED','DENIED','CANCELLED'))
+              ),
   resolution  TEXT,
-  -- Where the Founder's answer sends the task. Recorded at resolution time so
-  -- the engine derives the destination from the decision rather than trusting
-  -- whatever a caller asks for.
+  -- What the answer asked for, kept for the audit trail. The engine does not
+  -- take the destination from a single row; see StateEngine.
   resolved_target TEXT CHECK (resolved_target IS NULL OR resolved_target IN ('QUEUED','READY','REVIEW_FIX','READY_TO_MERGE','BLOCKED_POLICY','CANCELLED')),
   provenance  TEXT NOT NULL,
   created_at  TEXT NOT NULL,
   resolved_at TEXT
 );
-INSERT INTO founder_decisions_new (id, task_id, category, question, state, resolution, resolved_target, provenance, created_at, resolved_at)
-SELECT id, task_id, category, question, state, resolution, NULL, provenance, created_at, resolved_at FROM founder_decisions;
+-- A v1 row that reached RESOLVED carries no record of what was decided. It is
+-- migrated as an explicit APPROVED only where the original code could only have
+-- meant approval; anything else becomes WITHDRAWN, which authorises nothing.
+INSERT INTO founder_decisions_new (id, task_id, category, question, state, outcome, resolution, resolved_target, provenance, created_at, resolved_at)
+SELECT id, task_id, category, question,
+       CASE WHEN state IN ('REQUIRED','RESOLVED','WITHDRAWN') THEN state ELSE 'WITHDRAWN' END,
+       CASE WHEN state = 'RESOLVED' THEN 'APPROVED' ELSE NULL END,
+       resolution, NULL, provenance, created_at, resolved_at
+FROM founder_decisions;
 DROP TABLE founder_decisions;
 ALTER TABLE founder_decisions_new RENAME TO founder_decisions;
 CREATE INDEX idx_founder_decisions_task  ON founder_decisions(task_id);

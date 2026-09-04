@@ -11,13 +11,13 @@
  */
 
 import type { CoordinatorOutput, CoordinatorSnapshot } from './domain/coordinator.js';
-import type { FounderDecisionCategory, Task } from './domain/entities.js';
+import type { FounderDecisionCategory, FounderDecisionOutcome, Task } from './domain/entities.js';
 import { parseWorkerReport, type WorkerReport } from './domain/report.js';
 import type { TaskState } from './domain/states.js';
 import { StateEngine, type ApplyResult } from './state/engine.js';
 import { Store, type StoreOptions } from './state/store.js';
 import { ResourceManager } from './resources/manager.js';
-import { loadPolicy, policySchema, type Policy } from './policy/schema.js';
+import { loadPolicy, parsePolicy, type Policy } from './policy/schema.js';
 import { cleanAtCurrentHead, nextRoundNumber, completedVerdictRounds } from './policy/review.js';
 import { requireDecision } from './policy/founderGate.js';
 import { dependencyStatuses } from './scheduler/dependencies.js';
@@ -42,6 +42,14 @@ export interface OrchestratorOptions extends StoreOptions {
  * Rolls the application back so the report is recorded as rejected rather than
  * silently leaving a task running with nobody on it.
  */
+/** Thrown when a report is refused before anything is applied. */
+class ReportRejected extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ReportRejected';
+  }
+}
+
 class ReportProducedNoTransition extends Error {
   constructor(message: string) {
     super(message);
@@ -109,7 +117,7 @@ export class Orchestrator {
     // An injected policy is re-parsed rather than trusted. `Policy` is only a
     // type: a caller could otherwise hand in an object that opens every gate,
     // and the literal constraints in the schema would never run.
-    this.policy = options.policy ? policySchema.parse(options.policy) : loadPolicy(options.policyPath);
+    this.policy = options.policy ? parsePolicy(options.policy) : loadPolicy(options.policyPath);
     this.engine = new StateEngine(this.store, this.policy);
     this.resources = new ResourceManager(this.store, this.policy);
     this.coordinator = options.coordinator ?? new StubCoordinator();
@@ -155,75 +163,99 @@ export class Orchestrator {
       });
       return { accepted: false, reason: parsed.reason, issues: parsed.issues, applied: [] };
     }
-
     const report = parsed.report;
-    const task = this.store.getTask(report.taskId);
-    if (!task) {
-      const reason = `report references unknown task ${report.taskId}`;
-      this.store.recordWorkerReport({
-        taskId: null,
-        workerId: report.workerId,
-        accepted: false,
-        reason,
-        payload: report,
+
+    // Authorisation, application and the audit row all happen inside one
+    // immediate transaction. Reading the task and the lease outside it left a
+    // window where a lease could be released or reassigned in between, and an
+    // accepted audit row could survive a rolled-back application.
+    let outcome: SubmitReportResult;
+    try {
+      outcome = this.store.immediateTransaction((): SubmitReportResult => {
+        const authorised = this.authoriseReport(report);
+        if (!authorised.ok) {
+          // Recorded outside the transaction so the rejection survives.
+          throw new ReportRejected(authorised.reason);
+        }
+        this.store.recordWorkerReport({
+          taskId: report.taskId,
+          workerId: report.workerId,
+          accepted: true,
+          reason: null,
+          payload: report,
+        });
+        return {
+          accepted: true,
+          applied: this.applyReport(authorised.task, report, authorised.leaseId),
+        };
       });
-      return { accepted: false, reason, applied: [] };
+    } catch (err) {
+      if (err instanceof ReportRejected || err instanceof ReportProducedNoTransition) {
+        // Exactly one row records the rejection; the rolled-back attempt left none.
+        this.store.recordWorkerReport({
+          taskId: this.store.getTask(report.taskId) ? report.taskId : null,
+          workerId: report.workerId,
+          accepted: false,
+          reason: err.message,
+          payload: report,
+        });
+        return { accepted: false, reason: err.message, applied: [] };
+      }
+      throw err;
+    }
+    return outcome;
+  }
+
+  /**
+   * May this worker say this, about this task, right now?
+   *
+   * Runs inside the caller's transaction so nothing it checks can change before
+   * the report is applied.
+   *
+   * A report that carries an outcome — a PR, a completion, a failure, a block —
+   * must come from the worker currently holding the task's lease. Review and CI
+   * results are different: they describe something that happened elsewhere, so
+   * they only require a registered worker. That asymmetry is a Phase-0
+   * simplification and is recorded as follow-up debt; a real deployment wants a
+   * separate authenticated contract for them.
+   */
+  private authoriseReport(
+    report: WorkerReport,
+  ): { ok: true; task: Task; leaseId: string | null } | { ok: false; reason: string } {
+    const task = this.store.getTask(report.taskId);
+    if (!task) return { ok: false, reason: `report references unknown task ${report.taskId}` };
+
+    if (!this.store.getWorker(report.workerId)) {
+      return { ok: false, reason: `report from unregistered worker ${report.workerId}` };
     }
 
     const lease = this.store.getActiveWorkerLeaseForTask(task.id);
-    if (lease && lease.workerId !== report.workerId) {
-      const reason = `report from worker ${report.workerId} but task is leased to ${lease.workerId}`;
-      this.store.recordWorkerReport({
-        taskId: task.id,
-        workerId: report.workerId,
-        accepted: false,
-        reason,
-        payload: report,
-      });
-      return { accepted: false, reason, applied: [] };
-    }
+    const holdsLease = lease !== null && lease.workerId === report.workerId;
 
-    // Schema validity is not enough: a report has to make sense for the task it
-    // claims to finish. A COMPLETED report with no PR on a task that owes one
-    // used to be accepted and then map to no transition at all, leaving the
-    // task RUNNING with its lease released and invisible to reconciliation.
-    const consistency = consistentWithTask(task, report);
-    if (!consistency.ok) {
-      this.store.recordWorkerReport({
-        taskId: task.id,
-        workerId: report.workerId,
-        accepted: false,
-        reason: consistency.reason,
-        payload: report,
-      });
-      return { accepted: false, reason: consistency.reason, applied: [] };
-    }
+    const carriesOutcome =
+      report.pr !== undefined ||
+      report.status === 'COMPLETED' ||
+      report.status === 'FAILED' ||
+      report.status === 'BLOCKED' ||
+      report.founderDecisionRequired !== undefined ||
+      report.architectureDecisionRequired;
 
-    this.store.recordWorkerReport({
-      taskId: task.id,
-      workerId: report.workerId,
-      accepted: true,
-      reason: null,
-      payload: report,
-    });
-
-    try {
+    if (carriesOutcome && !holdsLease) {
       return {
-        accepted: true,
-        applied: this.store.transaction(() => this.applyReport(task, report, lease?.id ?? null)),
+        ok: false,
+        reason: lease
+          ? `task is leased to ${lease.workerId}; ${report.workerId} may not report its outcome`
+          : `task ${task.id} has no active lease; ${report.workerId} may not report its outcome`,
       };
-    } catch (err) {
-      if (!(err instanceof ReportProducedNoTransition)) throw err;
-      // The transaction rolled back; record the rejection outside it.
-      this.store.recordWorkerReport({
-        taskId: task.id,
-        workerId: report.workerId,
-        accepted: false,
-        reason: err.message,
-        payload: report,
-      });
-      return { accepted: false, reason: err.message, applied: [] };
     }
+    if (!carriesOutcome && !report.review && !report.ci) {
+      return { ok: false, reason: 'report carries neither an outcome nor a review or CI result' };
+    }
+
+    const consistency = consistentWithTask(task, report);
+    if (!consistency.ok) return { ok: false, reason: consistency.reason };
+
+    return { ok: true, task, leaseId: holdsLease ? lease.id : null };
   }
 
   /**
@@ -452,18 +484,22 @@ export class Orchestrator {
     decisionId: string,
     resolution: string,
     target?: TaskState,
+    outcome: FounderDecisionOutcome = 'APPROVED',
   ): { ok: boolean; reason?: string; transition?: ApplyResult } {
     // Read and write inside one immediate transaction, and claim the decision
     // with a conditional update. Reading REQUIRED outside the transaction let
     // two resolvers both proceed, the second overwriting the record of the
     // decision that actually released the task.
-    return this.store.immediateTransaction(() => this.resolveFounderDecisionInner(decisionId, resolution, target));
+    return this.store.immediateTransaction(() =>
+      this.resolveFounderDecisionInner(decisionId, resolution, target, outcome),
+    );
   }
 
   private resolveFounderDecisionInner(
     decisionId: string,
     resolution: string,
-    target?: TaskState,
+    target: TaskState | undefined,
+    outcome: FounderDecisionOutcome,
   ): { ok: boolean; reason?: string; transition?: ApplyResult } {
     const decision = this.store.getFounderDecision(decisionId);
     if (!decision) return { ok: false, reason: `unknown decision ${decisionId}` };
@@ -481,7 +517,7 @@ export class Orchestrator {
           : 'READY';
     const resolvedTarget = target ?? defaultTarget;
 
-    const claimed = this.store.claimFounderDecision(decisionId, resolution, resolvedTarget);
+    const claimed = this.store.claimFounderDecision(decisionId, resolution, outcome, resolvedTarget);
     if (!claimed) {
       return { ok: false, reason: `decision ${decisionId} was resolved by someone else` };
     }
@@ -489,7 +525,7 @@ export class Orchestrator {
       taskId: decision.taskId,
       eventType: 'FOUNDER_DECISION_RESOLVED',
       actor: 'founder',
-      payload: { decisionId, category: decision.category, resolution, resolvedTarget },
+      payload: { decisionId, category: decision.category, outcome, resolution, resolvedTarget },
     });
 
     if (!decision.taskId) return { ok: true };

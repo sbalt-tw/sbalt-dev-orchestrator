@@ -3,9 +3,15 @@
 ## What a gate is
 
 A Founder Gate is a durable row, not a convention. `FounderDecision` has a
-category, a question, a state, and the task it belongs to. A gated action can
-proceed only when a decision exists for **that task**, in **that category**, in
-state `RESOLVED`.
+category, a question, the task it belongs to, a lifecycle state, and — the part
+that matters most — an **outcome**.
+
+A gated action proceeds only when a decision exists for **that task**, in
+**that category**, resolved with outcome `APPROVED`.
+
+Outcome is separate from state because an approval and a refusal are both
+resolutions. An earlier version read authorisation from `RESOLVED` alone, which
+meant answering "no" opened the gate it was refusing.
 
 ## What is gated by default
 
@@ -31,6 +37,29 @@ be a deliberate change to this code, reviewed on its own terms.
 Phase 0 ships **no auto-merge**. `merge.byRiskClass` exists so a future phase
 has somewhere to put risk-based rules, and is constrained to the same literal
 today so it cannot be mistaken for a working override.
+
+## How a set of decisions is read
+
+Gate evaluation is deterministic and order-independent, because "whichever row
+was written last" is not an authorisation model:
+
+- a `DENIED` decision anywhere in the category wins, whenever it was written;
+- `CANCELLED` authorises nothing — it is not a quiet approval;
+- only `APPROVED` with no refusal opens the gate;
+- a category carrying both an approval and a refusal fails closed.
+
+The same rule decides where a task goes once every decision on it is answered:
+any denial sends it to `BLOCKED_POLICY`, any cancellation to `CANCELLED`, and
+only an all-approved set lets it continue. A task stays parked while **any**
+decision on it is unanswered, so resolving one gate cannot release it past
+another.
+
+## Infrastructure failure does not clear a gate
+
+A task interrupted while awaiting a decision comes back still awaiting it.
+`RECOVERED` returns such a task to `FOUNDER_DECISION`, never to `QUEUED`, and
+the scheduler independently refuses to dispatch any task with an outstanding
+decision. An interruption is not a route around a human.
 
 ## What cannot open a gate
 
@@ -70,6 +99,11 @@ constraint:
 
 - a resource marked as gated with no category is rejected, rather than leased
   because there was nothing to check;
+- a resource inherited from an older database whose category was never recorded
+  is marked `legacy_unknown`, which matches no decision category and therefore
+  can never be authorised. Guessing a category would be worse than refusing:
+  labelling an unknown gate `production_write` would let a production approval
+  authorise something that actually guarded a rollback;
 - `staging-write` and `production-write` are gated **by name**, whatever the
   configuration says, so one forgotten line cannot remove the production gate.
 

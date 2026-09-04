@@ -18,7 +18,7 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { MIGRATIONS } from './schema.js';
+import { MIGRATIONS, type Migration } from './schema.js';
 
 export type Db = Database.Database;
 
@@ -42,6 +42,18 @@ export function openDatabase(path?: string): Db {
   return db;
 }
 
+export class MigrationError extends Error {}
+
+/**
+ * Apply pending migrations in order.
+ *
+ * A migration that rebuilds tables has to run with foreign keys disabled, and
+ * `PRAGMA foreign_keys` is a no-op inside a transaction — SQLite ignores it
+ * there. So the pragma is toggled around the transaction, not inside it, and
+ * `foreign_key_check` runs before the commit. Getting this wrong is what made
+ * an earlier version of migration 2 fail on any populated database while
+ * passing every fresh-database test.
+ */
 export function migrate(db: Db): void {
   db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
     version    INTEGER PRIMARY KEY,
@@ -58,13 +70,45 @@ export function migrate(db: Db): void {
 
   for (const migration of MIGRATIONS) {
     if (applied.has(migration.version)) continue;
+    applyMigration(db, migration);
+  }
+}
+
+function applyMigration(db: Db, migration: Migration): void {
+  const rebuilding = migration.rebuildsTables === true;
+  const foreignKeysWereOn = Boolean(db.pragma('foreign_keys', { simple: true }));
+
+  if (rebuilding) {
+    // Outside any transaction: this is the only place the pragma takes effect.
+    db.pragma('foreign_keys = OFF');
+    // Keep ALTER TABLE ... RENAME from rewriting references in other tables'
+    // schemas while the rebuild is half-done.
+    db.pragma('legacy_alter_table = ON');
+  }
+
+  try {
     const run = db.transaction(() => {
       db.exec(migration.sql);
-      db.prepare(
-        'INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)',
-      ).run(migration.version, migration.name, new Date().toISOString());
+      if (rebuilding) {
+        const violations = db.pragma('foreign_key_check') as unknown[];
+        if (violations.length > 0) {
+          throw new MigrationError(
+            `migration ${migration.version} (${migration.name}) left ${violations.length} foreign key violation(s); rolled back`,
+          );
+        }
+      }
+      db.prepare('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)').run(
+        migration.version,
+        migration.name,
+        new Date().toISOString(),
+      );
     });
     run();
+  } finally {
+    if (rebuilding) {
+      db.pragma('legacy_alter_table = OFF');
+      if (foreignKeysWereOn) db.pragma('foreign_keys = ON');
+    }
   }
 }
 

@@ -44,16 +44,44 @@ export function gateRequired(policy: Policy, category: FounderDecisionCategory):
   }
 }
 
-function findResolved(
+/**
+ * Decide whether a category is authorised for a task.
+ *
+ * Deterministic and order-independent, because "whichever row was written last"
+ * is not an authorisation model. A refusal anywhere in the set wins; a
+ * cancellation authorises nothing; only an approval with no refusal opens the
+ * gate. Anything ambiguous fails closed.
+ */
+function evaluateCategory(
   decisions: readonly FounderDecision[],
   taskId: string,
   category: FounderDecisionCategory,
-): FounderDecision | null {
-  return (
-    decisions.find(
-      (d) => d.taskId === taskId && d.category === category && d.state === 'RESOLVED',
-    ) ?? null
-  );
+): { authorised: boolean; reason: string; decisionId: string | null } {
+  const relevant = decisions.filter((d) => d.taskId === taskId && d.category === category);
+  const denied = relevant.find((d) => d.state === 'RESOLVED' && d.outcome === 'DENIED');
+  if (denied) {
+    return { authorised: false, reason: `decision ${denied.id} denied ${category}`, decisionId: denied.id };
+  }
+  const cancelled = relevant.find((d) => d.state === 'RESOLVED' && d.outcome === 'CANCELLED');
+  const approved = relevant.find((d) => d.state === 'RESOLVED' && d.outcome === 'APPROVED');
+  if (approved) {
+    return { authorised: true, reason: `decision ${approved.id} approved ${category}`, decisionId: approved.id };
+  }
+  if (cancelled) {
+    return {
+      authorised: false,
+      reason: `decision ${cancelled.id} was cancelled; cancellation is not approval`,
+      decisionId: cancelled.id,
+    };
+  }
+  const pending = relevant.find((d) => d.state === 'REQUIRED');
+  return {
+    authorised: false,
+    reason: pending
+      ? `founder decision ${pending.id} still REQUIRED`
+      : `no approved founder decision for ${category}`,
+    decisionId: pending?.id ?? null,
+  };
 }
 
 /**
@@ -79,26 +107,42 @@ export function checkGate(
     };
   }
   const decisions = store.listFounderDecisions({ taskId: task.id });
-  const resolved = findResolved(decisions, task.id, category);
-  if (resolved) {
-    return {
-      required: true,
-      satisfied: true,
-      category,
-      reason: `founder decision ${resolved.id} resolved`,
-      decisionId: resolved.id,
-    };
-  }
-  const pending = decisions.find((d) => d.category === category && d.state === 'REQUIRED');
+  const verdict = evaluateCategory(decisions, task.id, category);
   return {
     required: true,
-    satisfied: false,
+    satisfied: verdict.authorised,
     category,
-    reason: pending
-      ? `founder decision ${pending.id} still REQUIRED`
-      : `no founder decision recorded for ${category}`,
-    decisionId: pending?.id ?? null,
+    reason: verdict.reason,
+    decisionId: verdict.decisionId,
   };
+}
+
+/**
+ * Where a task should go once every decision on it has been answered.
+ *
+ * Derived from the whole set, not from whichever row was resolved last: a
+ * refusal must not be overridden by a later approval of something else.
+ */
+export function continuationFor(
+  decisions: readonly FounderDecision[],
+): { target: 'BLOCKED_POLICY' | 'CANCELLED' | 'READY' | 'REVIEW_FIX' | 'READY_TO_MERGE'; reason: string } {
+  const resolved = decisions.filter((d) => d.state === 'RESOLVED');
+  const denied = resolved.find((d) => d.outcome === 'DENIED');
+  if (denied) {
+    return { target: 'BLOCKED_POLICY', reason: `decision ${denied.id} denied ${denied.category}` };
+  }
+  const cancelled = resolved.find((d) => d.outcome === 'CANCELLED');
+  if (cancelled) {
+    return { target: 'CANCELLED', reason: `decision ${cancelled.id} cancelled the work` };
+  }
+  const categories = new Set(resolved.map((d) => d.category));
+  if (categories.has('review_budget_extension')) {
+    return { target: 'REVIEW_FIX', reason: 'review budget extended' };
+  }
+  if (categories.size === 1 && categories.has('merge')) {
+    return { target: 'READY_TO_MERGE', reason: 'merge approved' };
+  }
+  return { target: 'READY', reason: 'all decisions approved' };
 }
 
 /** Create the decision row if this task does not already have an open one. */
