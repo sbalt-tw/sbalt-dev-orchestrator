@@ -14,10 +14,9 @@ review:
   stopWhen:
     blocker: 0
     high: 0
-  # A review killed by infrastructure produced no verdict, so by default it does
-  # not consume a round. Set true only if you want infrastructure flakiness to
-  # count against the work.
-  infraAbortConsumesRound: false
+  # A review killed by infrastructure produced no verdict and never consumes a
+  # round. That is not configurable: "budget exhausted" has to mean reviewers
+  # actually looked and still found something.
 
 lanes:
   defaultMaxActiveImplementationPrs: 1
@@ -30,6 +29,9 @@ workers:
   # next tick and its task is moved to BLOCKED_INFRA rather than assumed done.
   leaseTtlMs: 900000
 
+# The gates below are fixed in Phase 0. `founderRequired` is the only value the
+# parser accepts, so no policy file can switch a gate off. Introducing
+# risk-based automation is a deliberate future change, not a config edit.
 remoteWrites:
   staging: founderRequired
   production: founderRequired
@@ -40,7 +42,7 @@ destructiveOperations:
 merge:
   # Phase 0 ships no auto-merge. Every merge waits for a Founder decision.
   default: founderRequired
-  # Reserved for future risk-based auto-merge; ignored in Phase 0.
+  # Reserved for future risk-based automation; constrained to the same literal.
   byRiskClass: {}
 
 # Logical scarce resources. Capacity is independent of worker count: ten workers
@@ -49,6 +51,11 @@ merge:
 # How a resource is enforced outside this process is a project adapter concern.
 # A project that guards its reviewer with a lock file maps that file onto the
 # logical `codex` resource; the lock is not the architecture.
+#
+# A gated resource must name the decision category that authorises it. A gate
+# with nothing to check would lease itself, so the parser rejects the pair.
+# `staging-write` and `production-write` are gated by name regardless of what
+# the file says: one forgotten line must not remove the production gate.
 resources:
   - name: codex
     capacity: 1
@@ -61,9 +68,11 @@ resources:
   - name: staging-write
     capacity: 1
     founderAuthorizationRequired: true
+    founderCategory: staging_write
   - name: production-write
     capacity: 1
     founderAuthorizationRequired: true
+    founderCategory: production_write
 
 selfHosting:
   # The orchestrator does not develop itself. See docs/architecture.md.

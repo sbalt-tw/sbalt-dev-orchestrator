@@ -31,13 +31,17 @@ export function maxRoundsFor(policy: Policy, riskClass: RiskClass, override: num
   return riskClass === 'HIGH' ? policy.review.highRiskMaxRounds : policy.review.standardMaxRounds;
 }
 
-/** Only attempts that produced a verdict count. */
-export function completedVerdictRounds(attempts: readonly ReviewAttempt[], policy: Policy): number {
-  return attempts.filter(
-    (a) =>
-      a.status === 'COMPLETED_VERDICT' ||
-      (policy.review.infraAbortConsumesRound && a.status === 'INFRA_ABORTED'),
-  ).length;
+/**
+ * Only attempts that produced a verdict count.
+ *
+ * This is not configurable. "Budget exhausted" has to mean reviewers actually
+ * looked and still found something; if a machine ran out of disk three times
+ * the task has had zero real reviews, and escalating that to a human asks a
+ * question nobody can answer. The aborted attempts are still recorded, so the
+ * flakiness stays visible.
+ */
+export function completedVerdictRounds(attempts: readonly ReviewAttempt[], _policy: Policy): number {
+  return attempts.filter((a) => a.status === 'COMPLETED_VERDICT').length;
 }
 
 export function reviewBudget(

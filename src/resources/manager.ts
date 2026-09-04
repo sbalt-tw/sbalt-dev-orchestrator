@@ -16,26 +16,39 @@
  * slot means nine workers do something else.
  */
 
-import type { ResourceDefinition, ResourceLease, Task } from '../domain/entities.js';
+import type {
+  FounderDecisionCategory,
+  ResourceDefinition,
+  ResourceLease,
+  Task,
+} from '../domain/entities.js';
 import type { Store } from '../state/store.js';
 import type { Policy } from '../policy/schema.js';
+import { REMOTE_WRITE_RESOURCE_CATEGORIES } from '../policy/schema.js';
 import { checkGate } from '../policy/founderGate.js';
 
 export type AcquireFailureReason =
   | 'UNKNOWN_RESOURCE'
   | 'AT_CAPACITY'
   | 'FOUNDER_AUTHORIZATION_REQUIRED'
+  | 'MISCONFIGURED_RESOURCE'
   | 'ALREADY_HELD';
 
 export type AcquireResult =
   | { ok: true; lease: ResourceLease; alreadyHeld: boolean }
   | { ok: false; reason: AcquireFailureReason; detail: string };
 
-/** Map a resource name onto the Founder decision category that authorises it. */
-function gateCategoryFor(resourceName: string): 'staging_write' | 'production_write' | null {
-  if (resourceName === 'staging-write') return 'staging_write';
-  if (resourceName === 'production-write') return 'production_write';
-  return null;
+/**
+ * The category that authorises a resource.
+ *
+ * Two names are gated by identity regardless of what the definition says, so a
+ * missing flag on `production-write` cannot quietly remove the production gate.
+ * Anything else uses its declared category.
+ */
+function gateCategoryFor(def: ResourceDefinition): FounderDecisionCategory | null {
+  const forced = REMOTE_WRITE_RESOURCE_CATEGORIES[def.name];
+  if (forced) return forced;
+  return def.founderCategory;
 }
 
 export class ResourceManager {
@@ -44,13 +57,21 @@ export class ResourceManager {
     private readonly policy: Policy,
   ) {}
 
-  /** Load resource definitions from policy into durable state. */
+  /**
+   * Load resource definitions from policy into durable state.
+   *
+   * The two remote-write names are forced to their category here as well as in
+   * the parser, so a database seeded by an older build cannot end up with an
+   * ungated production-write row.
+   */
   syncDefinitions(): void {
     for (const def of this.policy.resources) {
+      const forced = REMOTE_WRITE_RESOURCE_CATEGORIES[def.name];
       this.store.upsertResource({
         name: def.name,
         capacity: def.capacity,
-        founderAuthorizationRequired: def.founderAuthorizationRequired,
+        founderAuthorizationRequired: forced ? true : def.founderAuthorizationRequired,
+        founderCategory: forced ?? def.founderCategory,
       });
     }
   }
@@ -91,17 +112,25 @@ export class ResourceManager {
       return { ok: true, lease: held, alreadyHeld: true };
     }
 
-    if (def.founderAuthorizationRequired) {
-      const category = gateCategoryFor(def.name);
-      if (category) {
-        const gate = checkGate(this.store, this.policy, input.task, category);
-        if (gate.required && !gate.satisfied) {
-          return {
-            ok: false,
-            reason: 'FOUNDER_AUTHORIZATION_REQUIRED',
-            detail: `${def.name}: ${gate.reason}`,
-          };
-        }
+    const category = gateCategoryFor(def);
+    const gated = def.founderAuthorizationRequired || REMOTE_WRITE_RESOURCE_CATEGORIES[def.name] !== undefined;
+    if (gated) {
+      if (!category) {
+        // Fail closed: a resource that claims to need authorisation but names
+        // no category cannot be checked, so it is refused rather than leased.
+        return {
+          ok: false,
+          reason: 'MISCONFIGURED_RESOURCE',
+          detail: `${def.name} is founder-gated but declares no authorising category`,
+        };
+      }
+      const gate = checkGate(this.store, this.policy, input.task, category);
+      if (gate.required && !gate.satisfied) {
+        return {
+          ok: false,
+          reason: 'FOUNDER_AUTHORIZATION_REQUIRED',
+          detail: `${def.name}: ${gate.reason}`,
+        };
       }
     }
 

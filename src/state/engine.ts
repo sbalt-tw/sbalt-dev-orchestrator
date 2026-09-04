@@ -16,7 +16,7 @@ import type { TaskEvent, TaskState } from '../domain/states.js';
 import { allowedTargets, isTerminal } from '../domain/states.js';
 import type { Store } from './store.js';
 import type { Policy } from '../policy/schema.js';
-import { checkGate } from '../policy/founderGate.js';
+import { checkGate, requireDecision } from '../policy/founderGate.js';
 import { classifyVerdict, cleanAtCurrentHead } from '../policy/review.js';
 import { dependenciesSatisfied } from '../scheduler/dependencies.js';
 
@@ -73,11 +73,31 @@ export class StateEngine {
     }
 
     // --- resolve the target -------------------------------------------------
+    //
+    // Every multi-target event resolves deterministically from persisted data.
+    // Letting the caller pick among allowed targets would mean an architecture
+    // approval could drive a task to READY_TO_MERGE, so the caller may only
+    // confirm what the engine computes.
     let target: TaskState;
     let note: string | undefined;
 
     if (input.event === 'CODEX_VERDICT') {
       const resolved = this.resolveVerdictTarget(input);
+      if (!resolved.ok) return this.reject(from, resolved.reason, input);
+      target = resolved.target;
+      note = resolved.note;
+    } else if (input.event === 'FOUNDER_DECISION_RESOLVED') {
+      const resolved = this.resolveFounderTarget(input);
+      if (!resolved.ok) return this.reject(from, resolved.reason, input);
+      target = resolved.target;
+      note = resolved.note;
+    } else if (input.event === 'RECOVERED') {
+      const resolved = this.resolveRecoveredTarget(input);
+      if (!resolved.ok) return this.reject(from, resolved.reason, input);
+      target = resolved.target;
+      note = resolved.note;
+    } else if (input.event === 'WORKER_FAILED') {
+      const resolved = this.resolveWorkerFailedTarget(input);
       if (!resolved.ok) return this.reject(from, resolved.reason, input);
       target = resolved.target;
       note = resolved.note;
@@ -116,6 +136,9 @@ export class StateEngine {
     if (!guard.ok) return this.reject(from, guard.reason, input);
 
     // --- commit -------------------------------------------------------------
+    // Everything below runs inside the same transaction as the caller's
+    // `apply`, so the state change, its history row and any decision it
+    // creates land together or not at all.
     this.store.setTaskState(task.id, target);
     this.store.appendEvent({
       taskId: task.id,
@@ -125,7 +148,103 @@ export class StateEngine {
       toState: target,
       payload: { ...(input.payload ?? {}), ...(note ? { note } : {}) },
     });
+
+    if (input.event === 'INFRA_FAILURE') {
+      // Remember where the work was interrupted so RECOVERED has somewhere
+      // definite to return to.
+      this.store.setPreInfraState(task.id, from);
+    }
+
+    if (input.event === 'CODEX_VERDICT' && target === 'FOUNDER_DECISION') {
+      // A task parked on an exhausted review budget needs something to
+      // resolve. Without this row it would sit in FOUNDER_DECISION with an
+      // empty decision list and no way forward.
+      const decision = requireDecision(
+        this.store,
+        this.store.requireTask(task.id),
+        'review_budget_extension',
+        `Review budget exhausted for "${task.title}" with findings outstanding. Extend the budget, or decide otherwise?`,
+        input.actor,
+      );
+      this.store.appendEvent({
+        taskId: task.id,
+        eventType: 'FOUNDER_DECISION_REQUIRED',
+        actor: input.actor,
+        fromState: target,
+        toState: target,
+        payload: { category: 'review_budget_extension', decisionId: decision.id },
+      });
+    }
+
     return note ? { ok: true, from, to: target, note } : { ok: true, from, to: target };
+  }
+
+  /**
+   * The destination of a resolved Founder decision comes from the decision row
+   * itself: which task it belongs to, and the target recorded when it was
+   * resolved. A decision on another task, or one still REQUIRED, resolves
+   * nothing.
+   */
+  private resolveFounderTarget(
+    input: ApplyEventInput,
+  ): { ok: true; target: TaskState; note: string } | { ok: false; reason: string } {
+    const decisionId = input.payload?.['decisionId'];
+    if (typeof decisionId !== 'string') {
+      return { ok: false, reason: 'FOUNDER_DECISION_RESOLVED requires payload.decisionId' };
+    }
+    const decision = this.store.getFounderDecision(decisionId);
+    if (!decision) return { ok: false, reason: `unknown founder decision: ${decisionId}` };
+    if (decision.taskId !== input.taskId) {
+      return {
+        ok: false,
+        reason: `founder decision ${decisionId} belongs to task ${decision.taskId ?? 'none'}, not ${input.taskId}`,
+      };
+    }
+    if (decision.state !== 'RESOLVED') {
+      return { ok: false, reason: `founder decision ${decisionId} is ${decision.state}, not RESOLVED` };
+    }
+    if (!decision.resolvedTarget) {
+      return { ok: false, reason: `founder decision ${decisionId} recorded no resolved target` };
+    }
+    return {
+      ok: true,
+      target: decision.resolvedTarget,
+      note: `${decision.category} decision ${decisionId} resolved`,
+    };
+  }
+
+  /**
+   * Recovery returns a task to where it was interrupted, not to wherever the
+   * caller would prefer. A task interrupted while RUNNING goes back to QUEUED
+   * so dependencies and capacity are re-evaluated before it runs again.
+   */
+  private resolveRecoveredTarget(
+    input: ApplyEventInput,
+  ): { ok: true; target: TaskState; note: string } | { ok: false; reason: string } {
+    const pre = this.store.getPreInfraState(input.taskId);
+    const target: TaskState =
+      pre === 'WAITING_REVIEW' || pre === 'WAITING_CI' || pre === 'REVIEW_FIX' ? pre : 'QUEUED';
+    return {
+      ok: true,
+      target,
+      note: pre ? `recovered to the state interrupted by infrastructure (${pre})` : 'recovered to QUEUED',
+    };
+  }
+
+  /**
+   * A worker failure is infrastructure or it is the work. The report says
+   * which; the engine does not guess.
+   */
+  private resolveWorkerFailedTarget(
+    input: ApplyEventInput,
+  ): { ok: true; target: TaskState; note: string } | { ok: false; reason: string } {
+    const kind = input.payload?.['errorKind'];
+    if (kind !== 'INFRA' && kind !== 'TASK') {
+      return { ok: false, reason: "WORKER_FAILED requires payload.errorKind of 'INFRA' or 'TASK'" };
+    }
+    return kind === 'INFRA'
+      ? { ok: true, target: 'BLOCKED_INFRA', note: 'worker failed for an infrastructure reason' }
+      : { ok: true, target: 'REVIEW_FIX', note: 'worker failed on the work itself' };
   }
 
   private resolveVerdictTarget(
@@ -214,15 +333,8 @@ export class StateEngine {
       }
 
       case 'FOUNDER_DECISION_RESOLVED': {
-        const resolved = this.store
-          .listFounderDecisions({ taskId: task.id })
-          .filter((d) => d.state === 'RESOLVED');
-        if (resolved.length === 0) {
-          return {
-            ok: false,
-            reason: `no resolved founder decision belongs to task ${task.id}`,
-          };
-        }
+        // Ownership, state and destination are all verified while resolving the
+        // target, so there is nothing left to re-check here.
         return { ok: true };
       }
 

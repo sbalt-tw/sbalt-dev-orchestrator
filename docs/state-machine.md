@@ -69,13 +69,18 @@ destination depends on data:
 - `WAITING_REVIEW --CODEX_VERDICT-->` `READY_TO_MERGE` | `REVIEW_FIX` |
   `FOUNDER_DECISION`. The engine computes this from the verdict counts and the
   remaining budget; a caller cannot choose.
-- `FOUNDER_DECISION --FOUNDER_DECISION_RESOLVED-->` several states, because it
-  depends what was decided. The caller must name a target and it must be in the
-  allowed set.
-- `BLOCKED_INFRA --RECOVERED-->` several states, same reasoning.
+- `FOUNDER_DECISION --FOUNDER_DECISION_RESOLVED-->` several states, resolved
+  from the decision row: which task it belongs to, and the destination recorded
+  when the Founder answered.
+- `BLOCKED_INFRA --RECOVERED-->` several states, resolved from the state the
+  task occupied when infrastructure failed.
+- `RUNNING --WORKER_FAILED-->` `BLOCKED_INFRA` or `REVIEW_FIX`, resolved from
+  the reported error kind.
 
-Ambiguity without an explicit target is rejected, and an explicit target that
-contradicts the engine's own computation is rejected.
+In every case the engine computes the destination and the caller may only
+confirm it. An earlier version let the caller pick any allowed target, which
+meant an architecture approval could push a task to `READY_TO_MERGE`. A target
+that contradicts the computed one is rejected.
 
 ## Guards
 

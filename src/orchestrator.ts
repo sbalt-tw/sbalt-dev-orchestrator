@@ -36,6 +36,40 @@ export interface OrchestratorOptions extends StoreOptions {
   adapter?: ProjectAdapter;
 }
 
+/**
+ * Does this report make sense for the task it is reporting on?
+ *
+ * The schema checks shape; this checks meaning. Every accepted report must map
+ * to at least one transition, otherwise the worker is released and the task is
+ * left running with nobody working on it.
+ */
+function consistentWithTask(
+  task: Task,
+  report: WorkerReport,
+): { ok: true } | { ok: false; reason: string } {
+  if (report.status === 'FAILED' && !report.error) {
+    return { ok: false, reason: 'a FAILED report must carry an error' };
+  }
+  if (report.status === 'COMPLETED' && task.requiresPr && !report.pr) {
+    return {
+      ok: false,
+      reason: `task ${task.id} requires a PR; a COMPLETED report must include one`,
+    };
+  }
+  if (
+    report.status === 'BLOCKED' &&
+    !report.founderDecisionRequired &&
+    !report.architectureDecisionRequired &&
+    !report.error
+  ) {
+    return {
+      ok: false,
+      reason: 'a BLOCKED report must say what blocks it: a decision request or an error',
+    };
+  }
+  return { ok: true };
+}
+
 export interface AppliedEvent {
   event: string;
   result: ApplyResult;
@@ -133,6 +167,22 @@ export class Orchestrator {
       return { accepted: false, reason, applied: [] };
     }
 
+    // Schema validity is not enough: a report has to make sense for the task it
+    // claims to finish. A COMPLETED report with no PR on a task that owes one
+    // used to be accepted and then map to no transition at all, leaving the
+    // task RUNNING with its lease released and invisible to reconciliation.
+    const consistency = consistentWithTask(task, report);
+    if (!consistency.ok) {
+      this.store.recordWorkerReport({
+        taskId: task.id,
+        workerId: report.workerId,
+        accepted: false,
+        reason: consistency.reason,
+        payload: report,
+      });
+      return { accepted: false, reason: consistency.reason, applied: [] };
+    }
+
     this.store.recordWorkerReport({
       taskId: task.id,
       workerId: report.workerId,
@@ -141,7 +191,10 @@ export class Orchestrator {
       payload: report,
     });
 
-    return { accepted: true, applied: this.applyReport(task, report, lease?.id ?? null) };
+    return {
+      accepted: true,
+      applied: this.store.transaction(() => this.applyReport(task, report, lease?.id ?? null)),
+    };
   }
 
   private releaseWorker(taskId: string, leaseId: string | null, workerId: string): void {
@@ -168,6 +221,20 @@ export class Orchestrator {
           event: 'INFRA_FAILURE',
           actor,
           payload: { message: report.error?.message ?? 'worker reported failure' },
+        }),
+      });
+      return applied;
+    }
+
+    // A failure in the work itself is rework, not an infrastructure block.
+    if (report.status === 'FAILED' && report.error?.kind === 'TASK') {
+      applied.push({
+        event: 'WORKER_FAILED',
+        result: this.engine.apply({
+          taskId: task.id,
+          event: 'WORKER_FAILED',
+          actor,
+          payload: { errorKind: 'TASK', message: report.error.message },
         }),
       });
       return applied;
@@ -242,13 +309,27 @@ export class Orchestrator {
       }
     }
 
+    // Both decision signals are honoured, and both are raised before any
+    // completion transition. `architectureDecisionRequired` was previously
+    // ignored, so a worker could report an architecture change and still take
+    // the task straight to DONE with no decision recorded.
+    const decisionRequests: Array<{ category: FounderDecisionCategory; question: string }> = [];
     if (report.founderDecisionRequired) {
+      decisionRequests.push(report.founderDecisionRequired);
+    }
+    if (report.architectureDecisionRequired) {
+      decisionRequests.push({
+        category: 'architecture_change',
+        question: `Worker flagged an architecture decision on "${task.title}".`,
+      });
+    }
+    for (const request of decisionRequests) {
       const current = this.store.requireTask(task.id);
-      requireDecision(
+      const decision = requireDecision(
         this.store,
         current,
-        report.founderDecisionRequired.category,
-        report.founderDecisionRequired.question,
+        request.category,
+        request.question,
         actor,
       );
       applied.push({
@@ -257,16 +338,31 @@ export class Orchestrator {
           taskId: task.id,
           event: 'FOUNDER_DECISION_REQUIRED',
           actor,
-          payload: { category: report.founderDecisionRequired.category },
+          payload: { category: request.category, decisionId: decision.id },
         }),
       });
     }
 
     // A task with no PR requirement finishes when its worker says so.
-    if (report.status === 'COMPLETED' && !task.requiresPr && !report.pr) {
+    if (report.status === 'COMPLETED' && !task.requiresPr && !report.pr && decisionRequests.length === 0) {
       applied.push({
         event: 'WORKER_COMPLETED',
         result: this.engine.apply({ taskId: task.id, event: 'WORKER_COMPLETED', actor }),
+      });
+    }
+
+    // Backstop. The worker's lease is gone, so if the task is still RUNNING it
+    // is unreachable by lease-based reconciliation. Rather than leave it
+    // stranded, block it where an operator can see it.
+    if (this.store.requireTask(task.id).state === 'RUNNING') {
+      applied.push({
+        event: 'INFRA_FAILURE',
+        result: this.engine.apply({
+          taskId: task.id,
+          event: 'INFRA_FAILURE',
+          actor,
+          payload: { cause: 'accepted report produced no state transition' },
+        }),
       });
     }
 
@@ -326,33 +422,38 @@ export class Orchestrator {
     if (decision.state !== 'REQUIRED') {
       return { ok: false, reason: `decision ${decisionId} is already ${decision.state}` };
     }
-    this.store.setFounderDecisionState(decisionId, 'RESOLVED', resolution);
-    this.store.appendEvent({
-      taskId: decision.taskId,
-      eventType: 'FOUNDER_DECISION_RESOLVED',
-      actor: 'founder',
-      payload: { decisionId, category: decision.category, resolution },
-    });
-
-    if (!decision.taskId) return { ok: true };
-    const task = this.store.getTask(decision.taskId);
-    if (!task || task.state !== 'FOUNDER_DECISION') return { ok: true };
-
+    // The destination is recorded on the decision itself. The engine then
+    // derives the transition from that row, so a resolved decision can only
+    // move the task it belongs to, to the place the Founder actually chose.
     const defaultTarget: TaskState =
       decision.category === 'merge'
         ? 'READY_TO_MERGE'
         : decision.category === 'review_budget_extension'
           ? 'REVIEW_FIX'
           : 'READY';
+    const resolvedTarget = target ?? defaultTarget;
 
-    const transition = this.engine.apply({
-      taskId: task.id,
-      event: 'FOUNDER_DECISION_RESOLVED',
-      actor: 'founder',
-      target: target ?? defaultTarget,
-      payload: { decisionId },
+    return this.store.transaction(() => {
+      this.store.setFounderDecisionState(decisionId, 'RESOLVED', resolution, resolvedTarget);
+      this.store.appendEvent({
+        taskId: decision.taskId,
+        eventType: 'FOUNDER_DECISION_RESOLVED',
+        actor: 'founder',
+        payload: { decisionId, category: decision.category, resolution, resolvedTarget },
+      });
+
+      if (!decision.taskId) return { ok: true };
+      const task = this.store.getTask(decision.taskId);
+      if (!task || task.state !== 'FOUNDER_DECISION') return { ok: true };
+
+      const transition = this.engine.apply({
+        taskId: task.id,
+        event: 'FOUNDER_DECISION_RESOLVED',
+        actor: 'founder',
+        payload: { decisionId },
+      });
+      return { ok: transition.ok, transition, ...(transition.ok ? {} : { reason: transition.reason }) };
     });
-    return { ok: transition.ok, transition, ...(transition.ok ? {} : { reason: transition.reason }) };
   }
 
   // ---------------------------------------------------------- coordinator

@@ -8,7 +8,14 @@ describe('Founder Gate', () => {
   it('will not lease a production-write resource without a resolved decision', () => {
     const h = makeHarness({
       policy: testPolicy({
-        resources: [{ name: 'production-write', capacity: 1, founderAuthorizationRequired: true }],
+        resources: [
+          {
+            name: 'production-write',
+            capacity: 1,
+            founderAuthorizationRequired: true,
+            founderCategory: 'production_write',
+          },
+        ],
       }),
     });
     addWorkers(h, 1);
@@ -33,7 +40,14 @@ describe('Founder Gate', () => {
   it('lets the work proceed once the matching decision is resolved', () => {
     const h = makeHarness({
       policy: testPolicy({
-        resources: [{ name: 'production-write', capacity: 1, founderAuthorizationRequired: true }],
+        resources: [
+          {
+            name: 'production-write',
+            capacity: 1,
+            founderAuthorizationRequired: true,
+            founderCategory: 'production_write',
+          },
+        ],
       }),
     });
     addWorkers(h, 1);
@@ -64,7 +78,14 @@ describe('Founder Gate', () => {
   it("does not let one task's decision unblock another task", () => {
     const h = makeHarness({
       policy: testPolicy({
-        resources: [{ name: 'production-write', capacity: 1, founderAuthorizationRequired: true }],
+        resources: [
+          {
+            name: 'production-write',
+            capacity: 1,
+            founderAuthorizationRequired: true,
+            founderCategory: 'production_write',
+          },
+        ],
       }),
     });
     addWorkers(h, 2);

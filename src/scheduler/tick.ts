@@ -15,6 +15,12 @@
  * keeps the orchestration semantics testable without a real worker, and keeps
  * the state write and the side effect separable.
  *
+ * Each dispatch commits inside one BEGIN IMMEDIATE transaction that re-reads
+ * every limit it is about to consume. Checking capacity, the concurrency
+ * ceiling and the lane slot in separate autocommit statements let two scheduler
+ * processes both see room and both commit, and left a partially acquired
+ * resource stranded if anything failed in between.
+ *
  * Not every READY task gets a worker. Concurrency, lane limits and resource
  * capacity all legitimately hold a task back, and doing so is recorded rather
  * than silent.
@@ -59,6 +65,20 @@ export interface TickResult {
   skipped: SkippedTask[];
 }
 
+/**
+ * Thrown to roll a dispatch attempt back.
+ *
+ * Returning a failure from inside the transaction would commit whatever had
+ * already been written; throwing discards it, and the reason is recorded
+ * afterwards.
+ */
+class DispatchAbort extends Error {
+  constructor(public readonly detail: string) {
+    super(detail);
+    this.name = 'DispatchAbort';
+  }
+}
+
 function laneActivePrCount(store: Store, laneId: string): number {
   return store
     .listTasks({ laneId })
@@ -74,7 +94,13 @@ export function tick(
   now: Date,
 ): TickResult {
   const result: TickResult = {
-    reconcile: { staleLeases: 0, tasksBlocked: [], resourcesReleased: 0 },
+    reconcile: {
+      staleLeases: 0,
+      tasksBlocked: [],
+      resourcesReleased: 0,
+      orphanedRunningTasks: [],
+      orphanedResourceLeases: 0,
+    },
     readied: [],
     waitingDependency: [],
     dispatched: [],
@@ -112,27 +138,83 @@ export function tick(
     (a, b) => b.priority - a.priority || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
   );
 
-  // 4. concurrency ceiling.
-  let activeLeases = store.listActiveWorkerLeases().length;
-
-  for (const task of candidates) {
-    if (activeLeases >= policy.workers.maxConcurrent) {
-      result.skipped.push({
-        taskId: task.id,
-        reason: `worker concurrency ceiling reached (${policy.workers.maxConcurrent})`,
+  for (const candidate of candidates) {
+    let outcome: DispatchOutcome;
+    try {
+      outcome = dispatchOne(store, engine, resources, policy, candidate.id);
+    } catch (err) {
+      if (!(err instanceof DispatchAbort)) throw err;
+      outcome = { kind: 'skipped', reason: err.detail };
+      // The rollback undid the acquisition; record why outside the transaction.
+      engine.apply({
+        taskId: candidate.id,
+        event: 'RESOURCE_UNAVAILABLE',
+        actor: 'scheduler',
+        payload: { detail: err.detail },
       });
-      continue;
+    }
+    if (outcome.kind === 'dispatched') result.dispatched.push(outcome.intent);
+    else if (outcome.kind === 'waiting') result.waitingDependency.push(candidate.id);
+    else result.skipped.push({ taskId: candidate.id, reason: outcome.reason });
+  }
+
+  return result;
+}
+
+type DispatchOutcome =
+  | { kind: 'dispatched'; intent: DispatchIntent }
+  | { kind: 'skipped'; reason: string }
+  | { kind: 'waiting' };
+
+/**
+ * Attempt one dispatch atomically.
+ *
+ * Everything the decision rests on is re-read inside the transaction: the
+ * task's current state, its dependencies, the concurrency ceiling, the lane
+ * slot, worker availability and resource capacity. A task that became
+ * ineligible since the candidate list was built is caught here rather than
+ * dispatched on stale information.
+ */
+function dispatchOne(
+  store: Store,
+  engine: StateEngine,
+  resources: ResourceManager,
+  policy: Policy,
+  taskId: string,
+): DispatchOutcome {
+  return store.immediateTransaction((): DispatchOutcome => {
+    const task = store.getTask(taskId);
+    if (!task) return { kind: 'skipped', reason: 'task disappeared' };
+    if (task.state !== 'READY' && task.state !== 'REVIEW_FIX') {
+      return { kind: 'skipped', reason: `task is ${task.state}; no longer a candidate` };
+    }
+
+    // Dependencies are re-checked for every candidate, not only for QUEUED
+    // tasks. A dependency added after a task became READY, or an upstream that
+    // left its required state while this one waited for capacity, would
+    // otherwise let contradictory work run.
+    if (!dependenciesSatisfied(store, task.id)) {
+      const applied = engine.apply({
+        taskId: task.id,
+        event: 'DEPENDENCIES_UNSATISFIED',
+        actor: 'scheduler',
+        payload: { detected: 'at dispatch time' },
+      });
+      return applied.ok
+        ? { kind: 'waiting' }
+        : { kind: 'skipped', reason: `dependencies unsatisfied: ${applied.reason}` };
+    }
+
+    if (store.listActiveWorkerLeases().length >= policy.workers.maxConcurrent) {
+      return {
+        kind: 'skipped',
+        reason: `worker concurrency ceiling reached (${policy.workers.maxConcurrent})`,
+      };
     }
 
     const lane = store.getLane(task.laneId);
-    if (!lane) {
-      result.skipped.push({ taskId: task.id, reason: 'lane not found' });
-      continue;
-    }
-    if (lane.status !== 'ACTIVE') {
-      result.skipped.push({ taskId: task.id, reason: `lane is ${lane.status}` });
-      continue;
-    }
+    if (!lane) return { kind: 'skipped', reason: 'lane not found' };
+    if (lane.status !== 'ACTIVE') return { kind: 'skipped', reason: `lane is ${lane.status}` };
 
     // Lane active-PR limit. A task already occupying a slot (REVIEW_FIX) may
     // continue; a fresh one may not open a second concurrent PR.
@@ -140,7 +222,6 @@ export function tick(
       const active = laneActivePrCount(store, lane.id);
       if (active >= lane.maxActiveImplementationPrs) {
         const reason = `lane '${lane.name}' already has ${active} active implementation PR task(s); limit is ${lane.maxActiveImplementationPrs}`;
-        result.skipped.push({ taskId: task.id, reason });
         store.appendEvent({
           taskId: task.id,
           eventType: 'LANE_PR_LIMIT_REACHED',
@@ -149,7 +230,7 @@ export function tick(
           toState: task.state,
           payload: { laneId: lane.id, active, limit: lane.maxActiveImplementationPrs },
         });
-        continue;
+        return { kind: 'skipped', reason };
       }
     }
 
@@ -158,39 +239,27 @@ export function tick(
       .listWorkers('IDLE')
       .find((w) => workerMatches(w.capabilities, task.requiredCapabilities));
     if (!worker) {
-      result.skipped.push({
-        taskId: task.id,
+      return {
+        kind: 'skipped',
         reason:
           task.requiredCapabilities.length > 0
             ? `no idle worker with capabilities [${task.requiredCapabilities.join(', ')}]`
             : 'no idle worker available',
-      });
-      continue;
+      };
     }
 
-    // 6. resources. All-or-nothing: a partial acquisition is rolled back so a
-    //    task cannot sit on a scarce slot it cannot use.
+    // 6. resources. All-or-nothing. The transaction rolls back a partial
+    //    acquisition, so a scarce slot can never be stranded by a task that
+    //    never ran.
     const acquired: string[] = [];
-    let resourceFailure: string | null = null;
     for (const resourceName of task.requiredResources) {
       const outcome = resources.acquire({ resourceName, task, workerId: worker.id });
-      if (outcome.ok) {
-        if (!outcome.alreadyHeld) acquired.push(outcome.lease.id);
-      } else {
-        resourceFailure = `${outcome.reason}: ${outcome.detail}`;
-        break;
+      if (!outcome.ok) {
+        const reason = `${outcome.reason}: ${outcome.detail}`;
+        // Roll the whole attempt back, then record the reason outside it.
+        throw new DispatchAbort(reason);
       }
-    }
-    if (resourceFailure) {
-      for (const leaseId of acquired) resources.release(leaseId);
-      result.skipped.push({ taskId: task.id, reason: resourceFailure });
-      engine.apply({
-        taskId: task.id,
-        event: 'RESOURCE_UNAVAILABLE',
-        actor: 'scheduler',
-        payload: { detail: resourceFailure },
-      });
-      continue;
+      if (!outcome.alreadyHeld) acquired.push(outcome.lease.id);
     }
 
     // 7. lease + state transition, then emit the dispatch intent.
@@ -207,23 +276,17 @@ export function tick(
       actor: 'scheduler',
       payload: { workerId: worker.id, leaseId: lease.id },
     });
-    if (!applied.ok) {
-      store.closeWorkerLease(lease.id, 'RELEASED');
-      store.setWorkerStatus(worker.id, 'IDLE');
-      for (const leaseId of acquired) resources.release(leaseId);
-      result.skipped.push({ taskId: task.id, reason: applied.reason });
-      continue;
-    }
+    if (!applied.ok) throw new DispatchAbort(applied.reason);
 
-    activeLeases += 1;
-    result.dispatched.push({
-      taskId: task.id,
-      laneId: task.laneId,
-      workerId: worker.id,
-      leaseId: lease.id,
-      resourceLeaseIds: acquired,
-    });
-  }
-
-  return result;
+    return {
+      kind: 'dispatched',
+      intent: {
+        taskId: task.id,
+        laneId: task.laneId,
+        workerId: worker.id,
+        leaseId: lease.id,
+        resourceLeaseIds: acquired,
+      },
+    };
+  });
 }

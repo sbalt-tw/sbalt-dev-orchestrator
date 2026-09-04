@@ -32,19 +32,16 @@ review:
 ```
 
 A task may override with its own `reviewMaxRounds`. When the budget is exhausted
-and findings are still outstanding, the task goes to `FOUNDER_DECISION` under
-category `review_budget_extension` — continuing past the agreed budget is a
-human decision, not something the loop grants itself.
+and findings are still outstanding, the task goes to `FOUNDER_DECISION` and the
+engine creates the `review_budget_extension` decision in the same transaction —
+continuing past the agreed budget is a human decision, not something the loop
+grants itself, and the task is never parked with nothing to resolve.
 
 ## An infrastructure abort costs no round
 
-```yaml
-review:
-  infraAbortConsumesRound: false   # default
-```
-
 A review attempt has three statuses: `RUNNING`, `COMPLETED_VERDICT` and
-`INFRA_ABORTED`. Only `COMPLETED_VERDICT` consumes a round.
+`INFRA_ABORTED`. Only `COMPLETED_VERDICT` consumes a round, and that is not
+configurable.
 
 The reasoning: "budget exhausted" should mean reviewers actually looked and
 still found something. If a machine runs out of disk three times, the task has
@@ -52,7 +49,8 @@ had zero real reviews, and treating that as three used rounds would escalate a
 question no human can answer. The attempt is still recorded, so the flakiness is
 visible.
 
-`infraAbortConsumesRound: true` is available for anyone who disagrees.
+An earlier draft made this a policy toggle. It was removed: a published
+guarantee that a config file can quietly invert is not a guarantee.
 
 ## Merge is anchored to an exact head
 

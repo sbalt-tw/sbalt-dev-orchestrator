@@ -82,70 +82,73 @@ describe('state machine', () => {
     h.orch.close();
   });
 
-  it('requires an explicit target when a transition is ambiguous', () => {
+  it('resolves a multi-target event from the decision, not from the caller', () => {
     const h = makeHarness();
     const task = h.orch.store.createTask({
       laneId: h.laneId,
-      title: 'ambiguous resolution',
+      title: 'deterministic resolution',
       taskType: 'IMPLEMENTATION',
       initialState: 'FOUNDER_DECISION',
     });
-    h.orch.store.createFounderDecision({
+    // More than one target is structurally allowed...
+    expect(allowedTargets('FOUNDER_DECISION', 'FOUNDER_DECISION_RESOLVED').length).toBeGreaterThan(1);
+
+    // ...but without a decision to read, nothing resolves.
+    const noDecision = h.orch.engine.apply({
       taskId: task.id,
-      category: 'merge',
+      event: 'FOUNDER_DECISION_RESOLVED',
+      actor: 'test',
+    });
+    expect(noDecision.ok).toBe(false);
+    if (!noDecision.ok) expect(noDecision.reason).toContain('payload.decisionId');
+
+    const decision = h.orch.store.createFounderDecision({
+      taskId: task.id,
+      category: 'architecture_change',
       question: 'q',
       provenance: 'test',
     });
-    const decisions = h.orch.store.listFounderDecisions({ taskId: task.id });
-    const first = decisions[0];
-    expect(first).toBeDefined();
-    if (first) h.orch.store.setFounderDecisionState(first.id, 'RESOLVED', 'yes');
+    h.orch.store.setFounderDecisionState(decision.id, 'RESOLVED', 'yes', 'READY');
 
-    expect(allowedTargets('FOUNDER_DECISION', 'FOUNDER_DECISION_RESOLVED').length).toBeGreaterThan(1);
-
-    const ambiguous = h.orch.engine.apply({
+    const resolved = h.orch.engine.apply({
       taskId: task.id,
       event: 'FOUNDER_DECISION_RESOLVED',
       actor: 'test',
+      payload: { decisionId: decision.id },
     });
-    expect(ambiguous.ok).toBe(false);
-    if (!ambiguous.ok) expect(ambiguous.reason).toContain('explicit target');
-
-    const explicit = h.orch.engine.apply({
-      taskId: task.id,
-      event: 'FOUNDER_DECISION_RESOLVED',
-      actor: 'test',
-      target: 'READY',
-    });
-    expect(explicit.ok).toBe(true);
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) expect(resolved.to).toBe('READY');
     h.orch.close();
   });
 
-  it('rejects a target that is not in the allowed set', () => {
+  it('rejects a caller target that contradicts the decision', () => {
     const h = makeHarness();
     const task = h.orch.store.createTask({
       laneId: h.laneId,
-      title: 'target must be allowed',
+      title: 'caller cannot override',
       taskType: 'IMPLEMENTATION',
       initialState: 'FOUNDER_DECISION',
     });
     const decision = h.orch.store.createFounderDecision({
       taskId: task.id,
-      category: 'merge',
+      category: 'architecture_change',
       question: 'q',
       provenance: 'test',
     });
-    h.orch.store.setFounderDecisionState(decision.id, 'RESOLVED', 'yes');
+    // The Founder said READY; the caller asks for READY_TO_MERGE.
+    h.orch.store.setFounderDecisionState(decision.id, 'RESOLVED', 'yes', 'READY');
 
     const result = h.orch.engine.apply({
       taskId: task.id,
       event: 'FOUNDER_DECISION_RESOLVED',
       actor: 'test',
-      target: 'DONE',
+      target: 'READY_TO_MERGE',
+      payload: { decisionId: decision.id },
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toContain('not allowed');
+    if (!result.ok) expect(result.reason).toContain('contradicts');
+    expect(h.orch.store.requireTask(task.id).state).toBe('FOUNDER_DECISION');
     h.orch.close();
   });
 

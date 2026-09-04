@@ -119,17 +119,17 @@ describe('review model', () => {
     h.orch.close();
   });
 
-  it('counts an infra abort as a round only when policy says so', () => {
-    const h = makeHarness({
-      policy: testPolicy({
-        review: { standardMaxRounds: 1, highRiskMaxRounds: 1, infraAbortConsumesRound: true },
-      }),
-    });
+  it('makes the infra-abort rule non-configurable', () => {
+    // The guarantee is published in the README and the domain comments, so it
+    // must not be something a policy file can quietly switch off.
+    expect(() =>
+      testPolicy({ review: { standardMaxRounds: 1, highRiskMaxRounds: 1, infraAbortConsumesRound: true } }),
+    ).toThrow();
+
+    const h = makeHarness({ policy: testPolicy({ review: { standardMaxRounds: 1, highRiskMaxRounds: 1 } }) });
     const task = reviewTask(h);
-
     h.orch.submitReport(reviewReport(h, task.id, { status: 'INFRA_ABORTED' }));
-
-    expect(completedVerdictRounds(h.orch.store.listReviewAttempts(task.id), h.orch.policy)).toBe(1);
+    expect(completedVerdictRounds(h.orch.store.listReviewAttempts(task.id), h.orch.policy)).toBe(0);
     h.orch.close();
   });
 

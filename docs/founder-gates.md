@@ -9,20 +9,28 @@ state `RESOLVED`.
 
 ## What is gated by default
 
-| Category | Default | Configured by |
-| --- | --- | --- |
-| `architecture_change` | Founder required | always |
-| `product_semantics_change` | Founder required | always |
-| `review_budget_extension` | Founder required | always |
-| `staging_write` | Founder required | `remoteWrites.staging` |
-| `production_write` | Founder required | `remoteWrites.production` |
-| `destructive_operation` | Founder required | `destructiveOperations.founderRequired` |
-| `rollback` | Founder required | `destructiveOperations.founderRequired` |
-| `merge` | Founder required | `merge.default` |
+All eight categories require a Founder decision, and in Phase 0 **none of them
+can be switched off by configuration**:
 
-Phase 0 ships **no auto-merge**. The policy types already carry
-`merge.byRiskClass`, so risk-based auto-merge is a later policy change rather
-than a scheduler rewrite — but it is not implemented and the field is ignored.
+| Category | Phase-0 status |
+| --- | --- |
+| `architecture_change` | Founder required |
+| `product_semantics_change` | Founder required |
+| `review_budget_extension` | Founder required |
+| `staging_write` | Founder required, not configurable |
+| `production_write` | Founder required, not configurable |
+| `destructive_operation` | Founder required, not configurable |
+| `rollback` | Founder required, not configurable |
+| `merge` | Founder required, not configurable |
+
+The policy parser accepts only the literal `founderRequired` for the
+configurable-looking settings, so a policy file cannot open a gate. A gate that
+a config edit can remove is not a gate; introducing risk-based automation has to
+be a deliberate change to this code, reviewed on its own terms.
+
+Phase 0 ships **no auto-merge**. `merge.byRiskClass` exists so a future phase
+has somewhere to put risk-based rules, and is constrained to the same literal
+today so it cannot be mistaken for a working override.
 
 ## What cannot open a gate
 
@@ -56,10 +64,17 @@ A decision can only be resolved once.
 
 ## Gated resources
 
-Two logical resources carry `founderAuthorizationRequired: true`:
-`staging-write` and `production-write`. The resource manager refuses to grant a
-lease on either without the matching resolved decision, so a task that needs one
-cannot even be dispatched. The scheduler records
+A gated resource must name the decision category that authorises it. Two things
+follow, both enforced by the parser, the resource manager and a database CHECK
+constraint:
+
+- a resource marked as gated with no category is rejected, rather than leased
+  because there was nothing to check;
+- `staging-write` and `production-write` are gated **by name**, whatever the
+  configuration says, so one forgotten line cannot remove the production gate.
+
+The resource manager refuses a lease without the matching resolved decision, so
+a task that needs one cannot even be dispatched. The scheduler records
 `FOUNDER_AUTHORIZATION_REQUIRED` as the reason and leaves the task `READY`.
 
 Note what this means in Phase 0: even with a resolved decision, nothing actually

@@ -106,7 +106,10 @@ Every command accepts `--json`.
   commit does not make the current commit mergeable.
 - **An infrastructure-killed review costs no round.** Budget exhaustion should
   mean reviewers looked and still found something, not that the machine ran out
-  of disk three times.
+  of disk three times. This is not a configurable toggle.
+- **Phase-0 gates cannot be configured away.** The policy parser accepts only
+  `founderRequired` for merge and remote writes, so no config file can open a
+  gate.
 - **Malformed input fails closed.** Worker reports and Coordinator output are
   validated against strict schemas; unknown fields and unknown actions are
   rejected rather than guessed at.

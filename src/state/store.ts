@@ -30,7 +30,7 @@ import type {
   WorkerLease,
   WorkerStatus,
 } from '../domain/entities.js';
-import type { TaskState } from '../domain/states.js';
+import { TASK_STATES, type TaskState } from '../domain/states.js';
 
 export interface Clock {
   now(): Date;
@@ -60,8 +60,24 @@ interface TaskRow {
   pr_head_sha: string | null;
   ci_status: string;
   review_max_rounds: number | null;
+  pre_infra_state: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Runtime guard for a persisted task state.
+ *
+ * TypeScript types vanish at runtime, so a plain JavaScript caller could pass
+ * any string. An unrecognised state would later fail to match the transition
+ * table and crash instead of failing closed, so it is rejected here as well as
+ * by the database CHECK constraint.
+ */
+export function assertTaskState(value: string): TaskState {
+  if (!(TASK_STATES as readonly string[]).includes(value)) {
+    throw new Error(`invalid task state: ${JSON.stringify(value)}`);
+  }
+  return value as TaskState;
 }
 
 function parseStringArray(raw: string): string[] {
@@ -111,6 +127,18 @@ export class Store {
   /** Run `fn` inside a single SQLite transaction. */
   transaction<T>(fn: () => T): T {
     return this.db.transaction(fn)();
+  }
+
+  /**
+   * Run `fn` inside a BEGIN IMMEDIATE transaction.
+   *
+   * Used where a decision is made from a read and then committed — capacity
+   * checks, concurrency ceilings, lane slots. A deferred transaction would let
+   * two schedulers both read room and both commit; an immediate one takes the
+   * write lock up front so the second waits and re-reads.
+   */
+  immediateTransaction<T>(fn: () => T): T {
+    return this.db.transaction(fn).immediate();
   }
 
   // ---------------------------------------------------------------- projects
@@ -254,7 +282,7 @@ export class Store {
       laneId: input.laneId,
       title: input.title,
       taskType: input.taskType,
-      state: input.initialState ?? 'QUEUED',
+      state: assertTaskState(input.initialState ?? 'QUEUED'),
       riskClass: input.riskClass ?? 'STANDARD',
       priority: input.priority ?? 0,
       requiresPr: input.requiresPr ?? true,
@@ -326,11 +354,82 @@ export class Store {
     return rows.map((r) => this.mapTask(r));
   }
 
-  /** Writes the new state. Legality is decided by the state engine, not here. */
+  /**
+   * Writes the new state.
+   *
+   * Intended for StateEngine only — it is the component that decides whether a
+   * transition is legal, and this method deliberately performs no such check.
+   * The value is validated regardless, so an out-of-vocabulary state can never
+   * be persisted whatever calls it.
+   */
   setTaskState(taskId: string, state: TaskState): void {
     this.db
       .prepare('UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?')
-      .run(state, this.now(), taskId);
+      .run(assertTaskState(state), this.now(), taskId);
+  }
+
+  /** Remember where a task was when infrastructure failed, so RECOVERED has a
+   * deterministic destination rather than a caller-chosen one. */
+  setPreInfraState(taskId: string, state: TaskState | null): void {
+    this.db
+      .prepare('UPDATE tasks SET pre_infra_state = ? WHERE id = ?')
+      .run(state === null ? null : assertTaskState(state), taskId);
+  }
+
+  getPreInfraState(taskId: string): TaskState | null {
+    const row = this.db.prepare('SELECT pre_infra_state AS s FROM tasks WHERE id = ?').get(taskId) as
+      | { s: string | null }
+      | undefined;
+    return row?.s ? assertTaskState(row.s) : null;
+  }
+
+  /**
+   * Tasks left RUNNING with no active worker lease.
+   *
+   * This is the residue of a crash between closing a lease and transitioning
+   * the task. Without this query such a task is invisible to lease-based
+   * reconciliation and would stay RUNNING forever.
+   */
+  listRunningTasksWithoutActiveLease(): Task[] {
+    const rows = this.db
+      .prepare(
+        `SELECT t.* FROM tasks t
+         WHERE t.state = 'RUNNING'
+           AND NOT EXISTS (
+             SELECT 1 FROM worker_leases wl
+             WHERE wl.task_id = t.id AND wl.status = 'ACTIVE'
+           )`,
+      )
+      .all() as TaskRow[];
+    return rows.map((r) => this.mapTask(r));
+  }
+
+  /**
+   * Active resource leases held by tasks that are neither running nor leased —
+   * a scarce slot nobody is using.
+   */
+  listOrphanedResourceLeases(): ResourceLease[] {
+    const rows = this.db
+      .prepare(
+        `SELECT rl.* FROM resource_leases rl
+         JOIN tasks t ON t.id = rl.task_id
+         WHERE rl.status = 'ACTIVE'
+           AND t.state <> 'RUNNING'
+           AND NOT EXISTS (
+             SELECT 1 FROM worker_leases wl
+             WHERE wl.task_id = rl.task_id AND wl.status = 'ACTIVE'
+           )`,
+      )
+      .all() as Array<{
+        id: string;
+        resource_name: string;
+        task_id: string;
+        worker_id: string | null;
+        acquired_at: string;
+        expires_at: string | null;
+        status: string;
+      }>;
+    return rows.map((r) => this.mapResourceLease(r));
   }
 
   updateTaskFields(
@@ -544,21 +643,24 @@ export class Store {
   upsertResource(def: ResourceDefinition): void {
     this.db
       .prepare(
-        `INSERT INTO resources (name, capacity, founder_required) VALUES (?, ?, ?)
-         ON CONFLICT(name) DO UPDATE SET capacity = excluded.capacity, founder_required = excluded.founder_required`,
+        `INSERT INTO resources (name, capacity, founder_required, founder_category) VALUES (?, ?, ?, ?)
+         ON CONFLICT(name) DO UPDATE SET capacity = excluded.capacity,
+                                         founder_required = excluded.founder_required,
+                                         founder_category = excluded.founder_category`,
       )
-      .run(def.name, def.capacity, def.founderAuthorizationRequired ? 1 : 0);
+      .run(def.name, def.capacity, def.founderAuthorizationRequired ? 1 : 0, def.founderCategory ?? null);
   }
 
   getResource(name: string): ResourceDefinition | null {
     const row = this.db.prepare('SELECT * FROM resources WHERE name = ?').get(name) as
-      | { name: string; capacity: number; founder_required: number }
+      | { name: string; capacity: number; founder_required: number; founder_category: string | null }
       | undefined;
     return row
       ? {
           name: row.name,
           capacity: row.capacity,
           founderAuthorizationRequired: row.founder_required === 1,
+          founderCategory: (row.founder_category as ResourceDefinition['founderCategory']) ?? null,
         }
       : null;
   }
@@ -568,11 +670,13 @@ export class Store {
       name: string;
       capacity: number;
       founder_required: number;
+      founder_category: string | null;
     }>;
     return rows.map((r) => ({
       name: r.name,
       capacity: r.capacity,
       founderAuthorizationRequired: r.founder_required === 1,
+      founderCategory: (r.founder_category as ResourceDefinition['founderCategory']) ?? null,
     }));
   }
 
@@ -764,6 +868,7 @@ export class Store {
       question: input.question,
       state: 'REQUIRED',
       resolution: null,
+      resolvedTarget: null,
       provenance: input.provenance,
       createdAt: this.now(),
       resolvedAt: null,
@@ -797,6 +902,7 @@ export class Store {
     provenance: string;
     created_at: string;
     resolved_at: string | null;
+    resolved_target: string | null;
   }): FounderDecision {
     return {
       id: row.id,
@@ -805,6 +911,7 @@ export class Store {
       question: row.question,
       state: row.state as FounderDecisionState,
       resolution: row.resolution,
+      resolvedTarget: row.resolved_target ? assertTaskState(row.resolved_target) : null,
       provenance: row.provenance,
       createdAt: row.created_at,
       resolvedAt: row.resolved_at,
@@ -836,10 +943,23 @@ export class Store {
     return rows.map((r) => this.mapFounderDecision(r));
   }
 
-  setFounderDecisionState(id: string, state: FounderDecisionState, resolution: string | null): void {
+  setFounderDecisionState(
+    id: string,
+    state: FounderDecisionState,
+    resolution: string | null,
+    resolvedTarget: TaskState | null = null,
+  ): void {
     this.db
-      .prepare('UPDATE founder_decisions SET state = ?, resolution = ?, resolved_at = ? WHERE id = ?')
-      .run(state, resolution, state === 'REQUIRED' ? null : this.now(), id);
+      .prepare(
+        'UPDATE founder_decisions SET state = ?, resolution = ?, resolved_target = ?, resolved_at = ? WHERE id = ?',
+      )
+      .run(
+        state,
+        resolution,
+        resolvedTarget === null ? null : assertTaskState(resolvedTarget),
+        state === 'REQUIRED' ? null : this.now(),
+        id,
+      );
   }
 
   // ----------------------------------------------------------------- history

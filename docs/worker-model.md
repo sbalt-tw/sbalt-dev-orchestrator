@@ -49,6 +49,14 @@ change to the scheduler, the store or the state machine.
 Conceptual providers: `claude-code`, `shell`, `github-action`, `codex`, `human`.
 Phase 0 implements the abstraction plus `fake`.
 
+**A known limitation, stated rather than papered over.** `WorkerProvider.dispatch`
+takes one call and returns one finished report. That shape suits a fake worker
+and proves the orchestration semantics, but a real long-running worker needs
+more: a start acknowledgement, a lease token to heartbeat with, cancellation, and
+an asynchronous report callback. Designing that lifecycle is the first task of
+Phase 1A, before any real adapter is written. It changes this interface; it does
+not change the store, the state machine or the scheduler.
+
 ## Worker leases
 
 A dispatch creates a `WorkerLease` with a TTL. The database enforces at most one

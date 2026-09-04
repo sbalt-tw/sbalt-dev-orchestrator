@@ -21,8 +21,14 @@ disposable and a fresh pool can be registered at any time.
 
 ## Stale lease reconciliation
 
-Every tick starts by reconciling. A worker lease whose `expiresAt` has passed is
-treated as stale, and for each one the reconciler:
+Every tick starts by reconciling. Each lease is handled inside **one
+transaction**: an earlier version did it in steps, and a crash landing between
+"close the lease" and "block the task" left a task `RUNNING` with no active
+lease — invisible to lease-based reconciliation forever, so neither blocked nor
+recoverable.
+
+A worker lease whose `expiresAt` has passed is treated as stale, and for each one
+the reconciler:
 
 1. marks the lease `STALE`;
 2. returns the worker to `IDLE`;
@@ -34,11 +40,25 @@ treated as stale, and for each one the reconciler:
 Steps 2 and 3 matter as much as step 5. A dead process holding the only `codex`
 slot would otherwise block every other task that needs it, forever.
 
+Two further sweeps close the remaining gaps, because not every kind of residue
+is reachable by walking leases:
+
+- tasks found `RUNNING` with **no** active lease at all are moved to
+  `BLOCKED_INFRA`;
+- resource leases held by tasks that are neither running nor leased are
+  released.
+
 ## Recovery is a decision
 
 A task in `BLOCKED_INFRA` stays there. Ticking again does not re-dispatch it;
 there is a test that ticks twice and asserts nothing moves. Putting it back in
-play requires an explicit `RECOVERED` event naming a target state.
+play requires an explicit `RECOVERED` event.
+
+Where it returns to is not the caller's choice. The state the task occupied when
+infrastructure failed is recorded, and `RECOVERED` sends it back there — a task
+interrupted while `RUNNING` returns to `QUEUED` so dependencies and capacity are
+re-evaluated before it runs again. A caller asking for a different destination is
+rejected.
 
 The alternative — automatically re-running anything that looked interrupted — is
 how you get two workers on the same branch, two PRs for one task, or a

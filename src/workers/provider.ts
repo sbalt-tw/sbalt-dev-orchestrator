@@ -40,8 +40,16 @@ export interface WorkerProvider {
   /** Capabilities every worker from this provider has. */
   capabilities(): string[];
   /**
-   * Start work. Phase-0 providers return a report directly; a real provider
-   * would return once the worker has been handed the task.
+   * Run the task and return its report.
+   *
+   * Phase-0 limitation, stated plainly: this signature is synchronous in shape
+   * — one call in, one finished report out. It is enough for a fake provider
+   * and for proving the orchestration semantics, and it is *not* enough for a
+   * long-running real worker, which needs a start acknowledgement, a lease
+   * token to heartbeat with, cancellation, and an asynchronous report callback.
+   *
+   * Designing that lifecycle is the first task of Phase 1A, before any real
+   * adapter is written. See docs/worker-model.md.
    */
   dispatch(context: DispatchContext): Promise<WorkerReport>;
 }

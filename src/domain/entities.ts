@@ -127,6 +127,14 @@ export interface ResourceDefinition {
   capacity: number;
   /** When true, a lease may only be granted after a resolved Founder decision. */
   founderAuthorizationRequired: boolean;
+  /**
+   * Which decision category authorises this resource.
+   *
+   * A gated resource with no category would have nothing to check and would
+   * lease itself, so the pair is enforced by the policy parser, the resource
+   * manager and a database CHECK constraint.
+   */
+  founderCategory: FounderDecisionCategory | null;
 }
 
 export interface ResourceLease {
@@ -162,6 +170,15 @@ export interface FounderDecision {
   question: string;
   state: FounderDecisionState;
   resolution: string | null;
+  /**
+   * Where the Founder's answer sends the task.
+   *
+   * Recorded when the decision is resolved so the engine derives the
+   * destination from the decision itself. Without it, any resolved decision on
+   * a task could drive any allowed target — an architecture approval could
+   * push a task to READY_TO_MERGE.
+   */
+  resolvedTarget: TaskState | null;
   provenance: string;
   createdAt: string;
   resolvedAt: string | null;
