@@ -1,0 +1,2160 @@
+{
+ "manifest_version": 1,
+ "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+ "source_note": "Every row is one it()/test() scenario present in tests/**/*.test.ts at the frozen head. The count is exactly the suite size reported by that head: 141.",
+ "census": {
+  "rows": 141,
+  "KEEP": 106,
+  "REWRITE": 30,
+  "DROP": 5
+ },
+ "method": {
+  "KEEP": "The scenario's meaning is unchanged by the reset and it returns in the target slice under the same name.",
+  "REWRITE": "The obligation survives but the model it asserted against does not; it returns in the target slice under the stated replacement name.",
+  "DROP": "The scenario tested an artefact of PR #1 that the clean baseline never creates. Permitted only when the named invariants carry the obligation in their own conformance tests.",
+  "not_a_reason": "That a previous review did not object to a scenario is never a reason to KEEP it.",
+  "added_tests": "New conformance tests are declared in invariants.json, never inside this manifest; this manifest describes only the 141 historical scenarios."
+ },
+ "rows": [
+  {
+   "row": 1,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/contracts.test.ts",
+   "source_line": 10,
+   "scenario": "worker report contract > rejects a report with an unknown field",
+   "invariants": [
+    "INV-A1"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "Strict report parsing survives the reset, but the report shape does not: PR-G's message carries an authenticated principal and a replay token that PR #1's report never had.",
+   "target_slice": "PR-G",
+   "replacement": "conf/A1/PR-G/unknown-report-field-refused",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 2,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/contracts.test.ts",
+   "source_line": 25,
+   "scenario": "worker report contract > rejects a report missing a required field",
+   "invariants": [
+    "INV-A1"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "Same obligation, new required set: the fields a report must carry are redefined by PR-G's ingestion contract.",
+   "target_slice": "PR-G",
+   "replacement": "conf/A1/PR-G/missing-report-field-refused",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 3,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/contracts.test.ts",
+   "source_line": 30,
+   "scenario": "worker report contract > rejects a report with an unknown status",
+   "invariants": [
+    "INV-A1",
+    "INV-S1"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "The status vocabulary is re-derived from the PR-B state table rather than from PR #1's report enum.",
+   "target_slice": "PR-G",
+   "replacement": "conf/A1/PR-G/unknown-report-status-refused",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 4,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/contracts.test.ts",
+   "source_line": 43,
+   "scenario": "worker report contract > rejects a report for an unknown task",
+   "invariants": [
+    "INV-A1"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "Task identity becomes task:<uuid-v4> under the canonical identity rules, so the unknown-task case is re-expressed against that form.",
+   "target_slice": "PR-G",
+   "replacement": "conf/A1/PR-G/report-for-unknown-task-refused",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 5,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/contracts.test.ts",
+   "source_line": 53,
+   "scenario": "worker report contract > rejects a report from a worker that does not hold the lease",
+   "invariants": [
+    "INV-L5",
+    "INV-L3"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "Lease possession now distinguishes a reconciliation claim from an execution claim, so 'does not hold the lease' has two distinct failing shapes instead of one.",
+   "target_slice": "PR-G",
+   "replacement": "conf/L5/PR-G/report-without-an-execution-claim-refused",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 6,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/contracts.test.ts",
+   "source_line": 75,
+   "scenario": "worker report contract > records a rejected report so the failure is auditable",
+   "invariants": [
+    "INV-S6"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A rejected report must stay auditable; the meaning is unchanged and INV-S6 carries it forward verbatim.",
+   "target_slice": "PR-G",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 7,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/contracts.test.ts",
+   "source_line": 90,
+   "scenario": "coordinator contract > rejects an unknown action",
+   "invariants": [
+    "INV-A1"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "Coordinator proposals become ingested messages under PR-G's contract, so the unknown-action case moves with them.",
+   "target_slice": "PR-G",
+   "replacement": "conf/A1/PR-G/unknown-coordinator-action-refused",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 8,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/contracts.test.ts",
+   "source_line": 95,
+   "scenario": "coordinator contract > rejects output with unexpected keys",
+   "invariants": [
+    "INV-A1"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "Unexpected-key rejection is retained but re-expressed against the versioned canonical serialization rather than an ad-hoc schema.",
+   "target_slice": "PR-G",
+   "replacement": "conf/A1/PR-G/coordinator-output-extra-keys-refused",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 9,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/contracts.test.ts",
+   "source_line": 100,
+   "scenario": "coordinator contract > refuses READY_TO_MERGE when no clean verdict exists at the current head",
+   "invariants": [
+    "INV-E3",
+    "INV-E7"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "The premise changed: merge readiness is no longer 'a clean verdict exists at the current head' but 'no unresolved blocking finding on the tuple', with base compared as well as head.",
+   "target_slice": "PR-F",
+   "replacement": "conf/E3/PR-F/merge-readiness-is-an-aggregate",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 10,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/contracts.test.ts",
+   "source_line": 121,
+   "scenario": "coordinator contract > refuses REQUEST_REVIEW before CI is green",
+   "invariants": [
+    "INV-E2"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "CI status becomes an immutable observation recomputed into a current snapshot, so the assertion moves from a stored flag to a recomputed slot.",
+   "target_slice": "PR-D",
+   "replacement": "conf/E2/PR-D/review-requested-only-after-a-passing-observation",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 11,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/contracts.test.ts",
+   "source_line": 142,
+   "scenario": "coordinator contract > refuses WAIT_DEPENDENCY when nothing is actually blocking",
+   "invariants": [
+    "INV-S3"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "The dependency graph moves to PR-H and a caller's claim is checked against persisted edges rather than against an in-memory graph object.",
+   "target_slice": "PR-H",
+   "replacement": "conf/S3/PR-H/dependency-claim-checked-against-the-graph",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 12,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/contracts.test.ts",
+   "source_line": 157,
+   "scenario": "coordinator contract > runs the stub coordinator end to end and records the validation",
+   "invariants": [
+    "INV-S6"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "The stub coordinator end-to-end walk is rebuilt on the new slices; only its recording obligation is unchanged.",
+   "target_slice": "PR-I",
+   "replacement": "conf/S6/PR-I/coordinator-run-is-recorded",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 13,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/contracts.test.ts",
+   "source_line": 181,
+   "scenario": "coordinator contract > keeps the coordinator advisory: a merge proposal still meets the gate",
+   "invariants": [
+    "INV-A1",
+    "INV-A2"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "The advisory principle survives but the gate it must not bypass is now an APPROVED envelope, not a resolved row.",
+   "target_slice": "PR-F",
+   "replacement": "conf/A2/PR-F/coordinator-proposal-does-not-authorise",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 14,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/demo.test.ts",
+   "source_line": 7,
+   "scenario": "phase-0 demo scenario > walks the whole workflow on synthetic data",
+   "invariants": [
+    "INV-L1"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "The demo is rebuilt over PR-A to PR-H; the scenario's value is that the whole workflow runs on durable state, which is retained.",
+   "target_slice": "PR-I",
+   "replacement": "conf/L1/PR-I/demo-walks-the-workflow",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 15,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/demo.test.ts",
+   "source_line": 29,
+   "scenario": "project adapter boundary > describes SBALT without needing or touching a checkout",
+   "invariants": [
+    "INV-L1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "The read-only project adapter contributes no authority and needs no checkout; the property is unchanged by the reset.",
+   "target_slice": "PR-I",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 16,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/demo.test.ts",
+   "source_line": 43,
+   "scenario": "project adapter boundary > reads a repo path from the environment rather than a committed absolute path",
+   "invariants": [
+    "INV-L1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Reading the repository path from the environment rather than a committed absolute path is unchanged and still required.",
+   "target_slice": "PR-I",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 17,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/demo.test.ts",
+   "source_line": 48,
+   "scenario": "project adapter boundary > classifies a risky change higher than a docs change",
+   "invariants": [
+    "INV-R1"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "Risk labels are now a separate axis from finding severity, so the comparison is re-expressed in risk-label terms and must not borrow severity words.",
+   "target_slice": "PR-I",
+   "replacement": "conf/R1/PR-I/risk-label-is-not-a-severity",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 18,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/demo.test.ts",
+   "source_line": 57,
+   "scenario": "policy > defaults every gate closed",
+   "invariants": [
+    "INV-A1",
+    "INV-R1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Defaulting every gate closed is the direct expression of INV-A1 and is unchanged.",
+   "target_slice": "PR-A",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 19,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/demo.test.ts",
+   "source_line": 66,
+   "scenario": "policy > rejects an unknown policy key instead of ignoring it",
+   "invariants": [
+    "INV-A1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Rejecting an unknown policy key rather than ignoring it is unchanged.",
+   "target_slice": "PR-A",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 20,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/demo.test.ts",
+   "source_line": 70,
+   "scenario": "policy > rejects self-hosting being switched on",
+   "invariants": [
+    "INV-R1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Self-hosting stays unparseable in Phase 0; the scenario is unchanged.",
+   "target_slice": "PR-A",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 21,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/dependencies.test.ts",
+   "source_line": 8,
+   "scenario": "dependency graph > holds B while A is unfinished, then releases it when A is DONE",
+   "invariants": [
+    "INV-L1",
+    "INV-R3"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Holding a dependent task until its predecessor is DONE is unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 22,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/dependencies.test.ts",
+   "source_line": 45,
+   "scenario": "dependency graph > lets an unrelated lane keep moving while a dependency waits",
+   "invariants": [
+    "INV-R3"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Lane independence under a waiting dependency is unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 23,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/dependencies.test.ts",
+   "source_line": 68,
+   "scenario": "dependency graph > rejects a self dependency",
+   "invariants": [
+    "INV-A1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A self dependency is an unreadable graph and must fail closed; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 24,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/dependencies.test.ts",
+   "source_line": 75,
+   "scenario": "dependency graph > rejects a direct cycle",
+   "invariants": [
+    "INV-A1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Direct cycle rejection is unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 25,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/dependencies.test.ts",
+   "source_line": 85,
+   "scenario": "dependency graph > rejects a transitive cycle",
+   "invariants": [
+    "INV-A1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Transitive cycle rejection is unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 26,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/dependencies.test.ts",
+   "source_line": 99,
+   "scenario": "dependency graph > honours a required state other than DONE",
+   "invariants": [
+    "INV-S1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A required state other than DONE is drawn from the closed vocabulary; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 27,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/founderGate.test.ts",
+   "source_line": 8,
+   "scenario": "Founder Gate > will not lease a production-write resource without a resolved decision",
+   "invariants": [
+    "INV-A2",
+    "INV-A1"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "'Resolved decision' is replaced by 'APPROVED outcome on a redeemable envelope', so the precondition under test is different even though the refusal is the same.",
+   "target_slice": "PR-F",
+   "replacement": "conf/A2/PR-F/production-write-needs-an-approved-envelope",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 28,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/founderGate.test.ts",
+   "source_line": 40,
+   "scenario": "Founder Gate > lets the work proceed once the matching decision is resolved",
+   "invariants": [
+    "INV-A2"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "The positive case likewise moves from a resolved row to a redeemed envelope with a consumed use ordinal.",
+   "target_slice": "PR-F",
+   "replacement": "conf/A2/PR-F/approved-envelope-releases-the-work",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 29,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/founderGate.test.ts",
+   "source_line": 78,
+   "scenario": "Founder Gate > does not let one task's decision unblock another task",
+   "invariants": [
+    "INV-A7"
+   ],
+   "disposition": "KEEP",
+   "rationale": "One task's answer must not unblock another; unchanged and still owned by INV-A7.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 30,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/founderGate.test.ts",
+   "source_line": 125,
+   "scenario": "Founder Gate > does not let a decision in one category open a different category",
+   "invariants": [
+    "INV-A3"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Category isolation is unchanged: an authorization binds its own action kind.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 31,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/founderGate.test.ts",
+   "source_line": 151,
+   "scenario": "Founder Gate > blocks a merge until a merge decision exists, and no prose can substitute",
+   "invariants": [
+    "INV-A1",
+    "INV-L3"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Prose in a report cannot substitute for authority; unchanged and reinforced by FE-1.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 32,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/founderGate.test.ts",
+   "source_line": 196,
+   "scenario": "Founder Gate > refuses to resolve the same decision twice",
+   "invariants": [
+    "INV-A5",
+    "INV-X4"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "Single use becomes ordinal consumption: 'resolve twice' is re-expressed as a second redemption attempt against an exhausted use count.",
+   "target_slice": "PR-F",
+   "replacement": "conf/A5/PR-F/exhausted-uses-cannot-redeem-again",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 33,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 29,
+   "scenario": "accepted reports always move the task > rejects a COMPLETED report with no PR on a task that owes one",
+   "invariants": [
+    "INV-S2"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A completion report that owes a PR must not finish the task; unchanged.",
+   "target_slice": "PR-G",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 34,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 53,
+   "scenario": "accepted reports always move the task > rejects a BLOCKED report that says nothing about what blocks it",
+   "invariants": [
+    "INV-A1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A blocked report that names no blocker is unreadable and must fail closed; unchanged.",
+   "target_slice": "PR-G",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 35,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 74,
+   "scenario": "accepted reports always move the task > rejects a report that maps to no transition instead of inventing a failure",
+   "invariants": [
+    "INV-E6",
+    "INV-S2"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Refusing rather than inventing a failure classification is unchanged.",
+   "target_slice": "PR-G",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 36,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 101,
+   "scenario": "accepted reports always move the task > does not free a worker that never held the task",
+   "invariants": [
+    "INV-L5"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Only the holder is released; unchanged.",
+   "target_slice": "PR-C",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 37,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 143,
+   "scenario": "accepted reports always move the task > treats a TASK-kind failure as rework, not an infrastructure block",
+   "invariants": [
+    "INV-E6"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A task-kind failure is rework, not an infrastructure block; unchanged.",
+   "target_slice": "PR-D",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 38,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 166,
+   "scenario": "architectureDecisionRequired is honoured > does not let a flagged architecture change complete without a decision",
+   "invariants": [
+    "INV-A1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A flagged architecture change cannot complete without a decision; unchanged.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 39,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 192,
+   "scenario": "state vocabulary cannot be escaped > refuses an unknown state at the application boundary",
+   "invariants": [
+    "INV-S1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Application-boundary state validation is unchanged.",
+   "target_slice": "PR-B",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 40,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 196,
+   "scenario": "state vocabulary cannot be escaped > refuses an unknown state at the database boundary",
+   "invariants": [
+    "INV-S1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Database-boundary state validation is unchanged.",
+   "target_slice": "PR-A",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 41,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 206,
+   "scenario": "state vocabulary cannot be escaped > refuses an unknown initial state",
+   "invariants": [
+    "INV-S1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "An unknown initial state is refused; unchanged.",
+   "target_slice": "PR-A",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 42,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 221,
+   "scenario": "Phase-0 gates are not configurable > refuses a policy that opens the merge gate",
+   "invariants": [
+    "INV-R1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A policy that opens the merge gate is refused; unchanged.",
+   "target_slice": "PR-A",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 43,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 225,
+   "scenario": "Phase-0 gates are not configurable > refuses a policy that opens the remote-write gates",
+   "invariants": [
+    "INV-R1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A policy that opens the remote-write gates is refused; unchanged.",
+   "target_slice": "PR-A",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 44,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 230,
+   "scenario": "Phase-0 gates are not configurable > refuses a policy that turns off the destructive-operation gate",
+   "invariants": [
+    "INV-R1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A policy that turns off the destructive-operation gate is refused; unchanged.",
+   "target_slice": "PR-A",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 45,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 234,
+   "scenario": "Phase-0 gates are not configurable > refuses a gated resource with no authorising category",
+   "invariants": [
+    "INV-R1",
+    "INV-A1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A gated resource naming no authorising category gates nothing and is refused; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 46,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 242,
+   "scenario": "Phase-0 gates are not configurable > refuses to leave production-write ungated",
+   "invariants": [
+    "INV-R1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Production write is gated by name whatever the configuration says; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 47,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 252,
+   "scenario": "dependencies are re-checked at dispatch > holds a READY task whose dependency appeared after it became ready",
+   "invariants": [
+    "INV-L1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A dependency added after a task became ready still holds it; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 48,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 281,
+   "scenario": "crash residue is always recoverable > blocks a task found RUNNING with no active lease",
+   "invariants": [
+    "INV-S5"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A task running with no live lease becomes visibly blocked; unchanged.",
+   "target_slice": "PR-C",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 49,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 305,
+   "scenario": "crash residue is always recoverable > returns a scarce slot held by a task that is no longer running",
+   "invariants": [
+    "INV-R4"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A scarce slot held by a stopped task is returned; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 50,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 335,
+   "scenario": "crash residue is always recoverable > recovers to where the work was interrupted, not to a caller-chosen state",
+   "invariants": [
+    "INV-S3",
+    "INV-S4"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Recovery returns to the interrupted state rather than a caller-chosen one; unchanged.",
+   "target_slice": "PR-B",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 51,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 365,
+   "scenario": "review budget escalation is actionable > creates a decision the Founder can actually resolve",
+   "invariants": [
+    "INV-A1",
+    "INV-S4"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "Escalation now opens a wait and issues a decision request bound to that wait, so what the Founder resolves is a different object.",
+   "target_slice": "PR-F",
+   "replacement": "conf/A1/PR-F/budget-escalation-opens-a-resolvable-wait",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 52,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 410,
+   "scenario": "durability of a dispatch > leaves no partial state when a dispatch cannot complete",
+   "invariants": [
+    "INV-R4",
+    "INV-X4"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A failed dispatch strands nothing; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 53,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 435,
+   "scenario": "durability of a dispatch > keeps state consistent across a restart mid-dispatch",
+   "invariants": [
+    "INV-L1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "State stays consistent across a restart mid-dispatch; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 54,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 460,
+   "scenario": "round-2 escapes stay closed > re-parses an injected policy so a gate cannot be handed in already open",
+   "invariants": [
+    "INV-R1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "An injected policy is re-parsed so a gate cannot arrive already open; unchanged.",
+   "target_slice": "PR-A",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 55,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 470,
+   "scenario": "round-2 escapes stay closed > recovers a task interrupted while waiting for CI",
+   "invariants": [
+    "INV-S4"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A task interrupted while waiting for CI is recoverable; unchanged.",
+   "target_slice": "PR-B",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 56,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 486,
+   "scenario": "round-2 escapes stay closed > keeps a task parked while a second decision is still outstanding",
+   "invariants": [
+    "INV-A8"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A task stays parked while any decision is outstanding; unchanged.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 57,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 522,
+   "scenario": "round-2 escapes stay closed > resolves a decision exactly once",
+   "invariants": [
+    "INV-X4"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "Exactly-once resolution is retained but now covers the whole issuance transaction — decision row, wait identity and envelope commit together — so the assertion is wider than the original.",
+   "target_slice": "PR-F",
+   "replacement": "conf/X4/PR-F/issuance-commits-once-and-atomically",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 58,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 538,
+   "scenario": "round-2 escapes stay closed > refuses to store a resource whose gate flag and category disagree",
+   "invariants": [
+    "INV-R1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A resource whose gate flag and category disagree is refused at the database; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 59,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 564,
+   "scenario": "round-2 escapes stay closed > refuses a dependency on a state that does not exist",
+   "invariants": [
+    "INV-S1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A dependency on a non-existent state is refused; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 60,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/hardening.test.ts",
+   "source_line": 572,
+   "scenario": "round-2 escapes stay closed > applies every pending migration to a fresh database",
+   "invariants": [
+    "INV-M4",
+    "INV-M2"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "This is the scenario whose fresh-database-only shape hid the round-3 blocker. It returns paired with a populated fixture so that a migration passing on an empty database cannot pass the suite.",
+   "target_slice": "PR-A",
+   "replacement": "conf/M2/PR-A/fresh-and-populated-both-upgrade",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 61,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/lanePolicy.test.ts",
+   "source_line": 7,
+   "scenario": "lane active-PR policy > will not open a second implementation PR in a lane limited to one",
+   "invariants": [
+    "INV-R3"
+   ],
+   "disposition": "KEEP",
+   "rationale": "One implementation PR per lane; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 62,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/lanePolicy.test.ts",
+   "source_line": 37,
+   "scenario": "lane active-PR policy > records why the second task was held so the block is explainable",
+   "invariants": [
+    "INV-S6"
+   ],
+   "disposition": "KEEP",
+   "rationale": "The reason a task was held is recorded; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 63,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/lanePolicy.test.ts",
+   "source_line": 57,
+   "scenario": "lane active-PR policy > allows a higher limit to run two implementation PRs at once",
+   "invariants": [
+    "INV-R3"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A higher limit permits two concurrent PRs; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 64,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/lanePolicy.test.ts",
+   "source_line": 70,
+   "scenario": "lane active-PR policy > does not count a non-PR docs task against the lane PR limit",
+   "invariants": [
+    "INV-R3"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "Round 5 showed the counting rule was wrong: the limit counts every non-terminal task whose PR is open, so the exemption must be re-derived from 'has no open PR' rather than from the task being a docs task.",
+   "target_slice": "PR-H",
+   "replacement": "conf/R3/PR-H/a-task-with-no-open-pr-does-not-count",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 65,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/lanePolicy.test.ts",
+   "source_line": 89,
+   "scenario": "lane active-PR policy > skips a paused lane",
+   "invariants": [
+    "INV-R3"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A paused lane is skipped; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 66,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/recovery.test.ts",
+   "source_line": 9,
+   "scenario": "crash and restart recovery > survives a process death mid-task without forgetting the work",
+   "invariants": [
+    "INV-L1",
+    "INV-S5"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Process death mid-task loses no work; unchanged.",
+   "target_slice": "PR-C",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 67,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/recovery.test.ts",
+   "source_line": 42,
+   "scenario": "crash and restart recovery > reconciles a stale lease into BLOCKED_INFRA rather than assuming success",
+   "invariants": [
+    "INV-S5"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A stale lease reconciles to blocked, never to success; unchanged.",
+   "target_slice": "PR-C",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 68,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/recovery.test.ts",
+   "source_line": 81,
+   "scenario": "crash and restart recovery > does not silently re-dispatch a recovered task into a second execution",
+   "invariants": [
+    "INV-S5"
+   ],
+   "disposition": "KEEP",
+   "rationale": "No silent re-dispatch after recovery; unchanged.",
+   "target_slice": "PR-C",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 69,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/recovery.test.ts",
+   "source_line": 122,
+   "scenario": "crash and restart recovery > keeps at most one active lease per task even under repeated ticks",
+   "invariants": [
+    "INV-L5"
+   ],
+   "disposition": "KEEP",
+   "rationale": "At most one active lease per task under repeated ticks; unchanged.",
+   "target_slice": "PR-C",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 70,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/recovery.test.ts",
+   "source_line": 143,
+   "scenario": "crash and restart recovery > persists lanes, tasks and decisions across a restart",
+   "invariants": [
+    "INV-L1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Lanes, tasks and decisions persist across a restart; unchanged.",
+   "target_slice": "PR-A",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 71,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/resources.test.ts",
+   "source_line": 7,
+   "scenario": "resource scheduler > grants only one lease when codex capacity is 1",
+   "invariants": [
+    "INV-P1",
+    "INV-R4"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "FE-6 redefines the property: capacity 1 means one in-flight invocation, not one active row, so the scenario moves to PR-C and gains a draining case its original could not express.",
+   "target_slice": "PR-C",
+   "replacement": "conf/P1/PR-C/one-in-flight-reviewer-invocation",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 72,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/resources.test.ts",
+   "source_line": 42,
+   "scenario": "resource scheduler > honours a configurable capacity greater than one",
+   "invariants": [
+    "INV-R4"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A configurable capacity above one is honoured; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 73,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/resources.test.ts",
+   "source_line": 68,
+   "scenario": "resource scheduler > releases a resource when the holding task reports back",
+   "invariants": [
+    "INV-R4"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A resource is released when its holder reports back; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 74,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/resources.test.ts",
+   "source_line": 113,
+   "scenario": "resource scheduler > refuses an unknown resource rather than inventing capacity",
+   "invariants": [
+    "INV-A1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "An unknown resource is refused rather than given invented capacity; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 75,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/resources.test.ts",
+   "source_line": 132,
+   "scenario": "resource scheduler > rolls back a partial acquisition so a scarce slot is not stranded",
+   "invariants": [
+    "INV-R4"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A partial acquisition rolls back; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 76,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/review.test.ts",
+   "source_line": 49,
+   "scenario": "review model > stops early on 0 blocker / 0 high",
+   "invariants": [
+    "INV-E3"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "'0 blocker / 0 high' is redefined as the aggregate over unresolved findings on the tuple, so the stopping condition under test is a different computation.",
+   "target_slice": "PR-D",
+   "replacement": "conf/E3/PR-D/stop-on-a-clean-aggregate",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 77,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/review.test.ts",
+   "source_line": 60,
+   "scenario": "review model > sends the task back for a fix when a HIGH is found",
+   "invariants": [
+    "INV-E3"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A high sends the task back for a fix; unchanged.",
+   "target_slice": "PR-D",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 78,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/review.test.ts",
+   "source_line": 70,
+   "scenario": "review model > sends the task back for a fix when a BLOCKER is found",
+   "invariants": [
+    "INV-E3"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A blocker sends the task back for a fix; unchanged.",
+   "target_slice": "PR-D",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 79,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/review.test.ts",
+   "source_line": 80,
+   "scenario": "review model > escalates to the Founder when the round budget is exhausted with findings open",
+   "invariants": [
+    "INV-A1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Budget exhaustion with findings open escalates rather than proceeding; unchanged.",
+   "target_slice": "PR-D",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 80,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/review.test.ts",
+   "source_line": 98,
+   "scenario": "review model > does not let an infrastructure abort consume a verdict round",
+   "invariants": [
+    "INV-E5"
+   ],
+   "disposition": "KEEP",
+   "rationale": "An infrastructure abort consumes no verdict round; unchanged.",
+   "target_slice": "PR-D",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 81,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/review.test.ts",
+   "source_line": 123,
+   "scenario": "review model > makes the infra-abort rule non-configurable",
+   "invariants": [
+    "INV-E5"
+   ],
+   "disposition": "KEEP",
+   "rationale": "The infra-abort rule stays non-configurable; unchanged.",
+   "target_slice": "PR-D",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 82,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/review.test.ts",
+   "source_line": 137,
+   "scenario": "review model > does not treat a clean verdict on an older head as merge readiness",
+   "invariants": [
+    "INV-E7"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "Round 5 showed head-only comparison is insufficient: the scenario returns comparing repository, base and head, which its original could not detect.",
+   "target_slice": "PR-D",
+   "replacement": "conf/E7/PR-D/stale-review-detected-by-base-and-head",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 83,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/review.test.ts",
+   "source_line": 159,
+   "scenario": "review model > refuses to drive CODEX_VERDICT from an attempt that produced no verdict",
+   "invariants": [
+    "INV-E5",
+    "INV-E6"
+   ],
+   "disposition": "KEEP",
+   "rationale": "An attempt that produced no verdict cannot drive a verdict transition; unchanged.",
+   "target_slice": "PR-D",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 84,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 89,
+   "scenario": "CRITICAL — an omitted outcome is not an approval > requires the caller to say what was decided",
+   "invariants": [
+    "INV-A2"
+   ],
+   "disposition": "KEEP",
+   "rationale": "The caller must state what was decided; unchanged and now also required at the envelope level.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 85,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 104,
+   "scenario": "CRITICAL — an omitted outcome is not an approval > refuses to mark a decision resolved without an outcome",
+   "invariants": [
+    "INV-A2"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A decision cannot be resolved without an outcome; unchanged.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 86,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 117,
+   "scenario": "CRITICAL — an omitted outcome is not an approval > refuses a RESOLVED row with a null outcome at the database boundary",
+   "invariants": [
+    "INV-A2",
+    "INV-S1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "The database refuses a resolved row with a null outcome; unchanged, and the IS NOT NULL formulation is carried into the v1 baseline.",
+   "target_slice": "PR-A",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 87,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 139,
+   "scenario": "CRITICAL — a legacy resolution is not consent > upgrades a v2 database and withdraws its unrecorded decisions",
+   "invariants": [
+    "INV-R2"
+   ],
+   "disposition": "DROP",
+   "rationale": "The scenario upgrades from PR #1's version 2, a schema shape that does not exist in the clean v1 baseline and never will. The obligation it protected — a row that never recorded a decision must not become consent — is INV-R2, which carries its own PR-A negative test, so dropping this row leaves no invariant uncovered.",
+   "target_slice": null,
+   "replacement": null,
+   "audit_note": "Removed with no replacement; the obligation is covered by the named invariants' own conformance tests."
+  },
+  {
+   "row": 88,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 156,
+   "scenario": "CRITICAL — a legacy resolution is not consent > does not let a withdrawn legacy decision open the merge gate",
+   "invariants": [
+    "INV-A2",
+    "INV-R2"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "There are no legacy rows to withdraw, but the underlying rule is general and survives: a decision carrying no APPROVED outcome authorises nothing, whatever produced it.",
+   "target_slice": "PR-F",
+   "replacement": "conf/A2/PR-F/a-decision-without-an-approval-authorises-nothing",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 89,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 166,
+   "scenario": "CRITICAL — a legacy resolution is not consent > recategorises a resource that migration 2 mislabelled as production_write",
+   "invariants": [
+    "INV-R2"
+   ],
+   "disposition": "DROP",
+   "rationale": "The scenario repairs a mislabelling performed by PR #1's migration 2, which the clean baseline never performs. INV-R2's negative test already forbids inventing a category for a row that never recorded one, so no coverage is lost.",
+   "target_slice": null,
+   "replacement": null,
+   "audit_note": "Removed with no replacement; the obligation is covered by the named invariants' own conformance tests."
+  },
+  {
+   "row": 90,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 175,
+   "scenario": "HIGH — a late blocking verdict takes back merge readiness > sends a merge-ready task back for rework and blocks the merge",
+   "invariants": [
+    "INV-E4",
+    "INV-E3"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A late blocking verdict takes back merge readiness; unchanged and now reinforced by the no-latest-verdict-wins rule.",
+   "target_slice": "PR-D",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 91,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 216,
+   "scenario": "HIGH — a late blocking verdict takes back merge readiness > rolls back an accepted report whose transition was refused",
+   "invariants": [
+    "INV-X4"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A refused component rolls the whole report back; unchanged.",
+   "target_slice": "PR-G",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 92,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 252,
+   "scenario": "HIGH — a gate answered during an outage still applies > carries the decision through recovery instead of stranding the task",
+   "invariants": [
+    "INV-S4"
+   ],
+   "disposition": "KEEP",
+   "rationale": "An answer given during an outage is carried through recovery; unchanged.",
+   "target_slice": "PR-B",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 93,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 270,
+   "scenario": "HIGH — a gate answered during an outage still applies > honours a refusal answered during an outage",
+   "invariants": [
+    "INV-A8",
+    "INV-S4"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A refusal answered during an outage is honoured; unchanged.",
+   "target_slice": "PR-B",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 94,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 285,
+   "scenario": "HIGH — an old answer does not decide a new question > lets a later merge approval reach READY_TO_MERGE after an earlier architecture approval",
+   "invariants": [
+    "INV-A7"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A later approval in a new wait reaches its own destination; unchanged.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 95,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 301,
+   "scenario": "HIGH — an old answer does not decide a new question > does not let a past budget extension route every future approval to rework",
+   "invariants": [
+    "INV-A7"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A past budget extension does not route every future approval; unchanged.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 96,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 316,
+   "scenario": "HIGH — an old answer does not decide a new question > lets a fresh request supersede an earlier refusal of the same category",
+   "invariants": [
+    "INV-A7"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A fresh request is how an earlier refusal is revisited; unchanged.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 97,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 331,
+   "scenario": "HIGH — an old answer does not decide a new question > keeps a denial winning within one wait, whatever order answers arrive",
+   "invariants": [
+    "INV-A8"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Denial wins within one wait whatever the order; unchanged.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 98,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 346,
+   "scenario": "HIGH — an old answer does not decide a new question > refuses to continue on a resolved decision with no recorded outcome",
+   "invariants": [
+    "INV-A2"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A resolved decision with no recorded outcome cannot continue the task; unchanged.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 99,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 369,
+   "scenario": "HIGH — a legacy gate survives initialisation > does not let a policy sync turn a legacy_unknown resource ungated",
+   "invariants": [
+    "INV-R1"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "legacy_unknown does not exist in the clean baseline, and round 5 showed protecting only that one category was the defect. The scenario returns generalised: no policy sync may ungate any gated resource.",
+   "target_slice": "PR-H",
+   "replacement": "conf/R1/PR-H/policy-sync-cannot-ungate-any-resource",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 100,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 400,
+   "scenario": "HIGH — an expired lease is not authority > refuses an outcome report once the lease has run out",
+   "invariants": [
+    "INV-L5"
+   ],
+   "disposition": "KEEP",
+   "rationale": "An expired lease is not authority for an outcome report; unchanged.",
+   "target_slice": "PR-G",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 101,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/round4.test.ts",
+   "source_line": 438,
+   "scenario": "HIGH — an expired lease is not authority > still accepts a report from a lease that is within its term",
+   "invariants": [
+    "INV-L5"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A lease within its term still authorises; unchanged.",
+   "target_slice": "PR-G",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 102,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/stateMachine.test.ts",
+   "source_line": 8,
+   "scenario": "state machine > rejects an event that is not allowed from the current state",
+   "invariants": [
+    "INV-S2"
+   ],
+   "disposition": "KEEP",
+   "rationale": "An event not permitted from the current state is rejected; unchanged.",
+   "target_slice": "PR-B",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 103,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/stateMachine.test.ts",
+   "source_line": 24,
+   "scenario": "state machine > persists a valid transition and records it in history",
+   "invariants": [
+    "INV-S2",
+    "INV-S6"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A valid transition persists and records history; unchanged.",
+   "target_slice": "PR-B",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 104,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/stateMachine.test.ts",
+   "source_line": 49,
+   "scenario": "state machine > records a rejection in history so blocked work is explainable",
+   "invariants": [
+    "INV-S6"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A rejection is recorded so blocked work is explainable; unchanged.",
+   "target_slice": "PR-B",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 105,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/stateMachine.test.ts",
+   "source_line": 64,
+   "scenario": "state machine > refuses to move a terminal task",
+   "invariants": [
+    "INV-S2"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A terminal task cannot be moved; unchanged.",
+   "target_slice": "PR-B",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 106,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/stateMachine.test.ts",
+   "source_line": 85,
+   "scenario": "state machine > resolves a multi-target event from the decision, not from the caller",
+   "invariants": [
+    "INV-S3"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A multi-target event resolves from the decision; unchanged.",
+   "target_slice": "PR-B",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 107,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/stateMachine.test.ts",
+   "source_line": 124,
+   "scenario": "state machine > rejects a caller target that contradicts the decision",
+   "invariants": [
+    "INV-S3"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A caller target contradicting the decision is rejected; unchanged.",
+   "target_slice": "PR-B",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 108,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/stateMachine.test.ts",
+   "source_line": 155,
+   "scenario": "state machine > will not let WORKER_COMPLETED finish a task that owes a PR",
+   "invariants": [
+    "INV-S2"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A completion cannot finish a task that owes a PR; unchanged.",
+   "target_slice": "PR-B",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 109,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/stateMachine.test.ts",
+   "source_line": 175,
+   "scenario": "state machine > rejects WORKER_ASSIGNED without an active worker lease",
+   "invariants": [
+    "INV-L5"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Assignment without an active lease is rejected; unchanged.",
+   "target_slice": "PR-C",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 110,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/stateMachine.test.ts",
+   "source_line": 191,
+   "scenario": "state machine > rejects a DEPENDENCIES_SATISFIED claim that contradicts the graph",
+   "invariants": [
+    "INV-S3"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A dependencies-satisfied claim contradicting the graph is rejected; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 111,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 131,
+   "scenario": "BLOCKER 1 — a populated v1 database upgrades > migrates without losing a row or breaking a reference",
+   "invariants": [
+    "INV-M3"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "The obligation is unchanged but its fixture is not: the populated fixture is now the clean v1 baseline rather than PR #1's version 1.",
+   "target_slice": "PR-A",
+   "replacement": "conf/M3/PR-A/populated-v1-upgrades-losslessly",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 112,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 162,
+   "scenario": "BLOCKER 1 — a populated v1 database upgrades > reopens and remains usable as an orchestrator after the upgrade",
+   "invariants": [
+    "INV-M4"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "Reopening after an upgrade must still work, against the new chain v1 to v7 rather than PR #1's three versions.",
+   "target_slice": "PR-A",
+   "replacement": "conf/M4/PR-A/reopen-after-upgrade",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 113,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 175,
+   "scenario": "BLOCKER 1 — a populated v1 database upgrades > leaves the database untouched when a migration fails",
+   "invariants": [
+    "INV-M3"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A failed migration leaves the database untouched; unchanged and directly re-usable.",
+   "target_slice": "PR-A",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 114,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 195,
+   "scenario": "HIGH 4 — a legacy gated resource fails closed > does not invent a category for a gated resource the old schema never described",
+   "invariants": [
+    "INV-M5",
+    "INV-R2"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "There is no old schema to describe, so the scenario returns in its general form: an unrecognised shape aborts rather than being guessed at, and provenance is never invented.",
+   "target_slice": "PR-A",
+   "replacement": "conf/M5/PR-A/unrecognised-shape-aborts",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 115,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 207,
+   "scenario": "HIGH 4 — a legacy gated resource fails closed > refuses to lease a legacy_unknown resource even with a production approval",
+   "invariants": [
+    "INV-A3"
+   ],
+   "disposition": "DROP",
+   "rationale": "legacy_unknown is an artefact of PR #1's migration and does not exist in the clean baseline. The general rule — an approval in one category never authorises another — is INV-A3, tested at PR-F, so nothing is left uncovered.",
+   "target_slice": null,
+   "replacement": null,
+   "audit_note": "Removed with no replacement; the obligation is covered by the named invariants' own conformance tests."
+  },
+  {
+   "row": 116,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 233,
+   "scenario": "HIGH 4 — a legacy gated resource fails closed > migrates a legacy resolution to WITHDRAWN rather than inventing consent",
+   "invariants": [
+    "INV-R2"
+   ],
+   "disposition": "DROP",
+   "rationale": "There are no legacy resolutions in a clean v1 baseline to migrate to WITHDRAWN. INV-R2's negative test forbids inventing consent from a row that never recorded it.",
+   "target_slice": null,
+   "replacement": null,
+   "audit_note": "Removed with no replacement; the obligation is covered by the named invariants' own conformance tests."
+  },
+  {
+   "row": 117,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 250,
+   "scenario": "HIGH 4 — a legacy gated resource fails closed > does not let a withdrawn legacy decision authorise anything",
+   "invariants": [
+    "INV-A2"
+   ],
+   "disposition": "DROP",
+   "rationale": "With no legacy rows, this collapses into the general rule that a decision without an APPROVED outcome authorises nothing, which row 88 carries forward as a rewritten scenario. Keeping both would assert the same obligation twice under a name that no longer describes anything.",
+   "target_slice": null,
+   "replacement": null,
+   "audit_note": "Removed with no replacement; the obligation is covered by the named invariants' own conformance tests."
+  },
+  {
+   "row": 118,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 261,
+   "scenario": "BLOCKER 2 — recovery does not erase a founder gate > returns a task interrupted at the gate to the gate",
+   "invariants": [
+    "INV-S4"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A task interrupted at the gate returns to the gate; unchanged.",
+   "target_slice": "PR-B",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 119,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 281,
+   "scenario": "BLOCKER 2 — recovery does not erase a founder gate > will not dispatch a task that still owes a decision, whatever state it is in",
+   "invariants": [
+    "INV-A1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A task owing a decision is never dispatched, whatever its state; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 120,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 307,
+   "scenario": "BLOCKER 2 — recovery does not erase a founder gate > lets recovery proceed normally when nothing is outstanding",
+   "invariants": [
+    "INV-S4"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Recovery proceeds normally when nothing is outstanding; unchanged.",
+   "target_slice": "PR-B",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 121,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 332,
+   "scenario": "BLOCKER 3 — multiple founder decisions > does not let a later approval override an earlier denial",
+   "invariants": [
+    "INV-A8"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A later approval does not override an earlier denial; unchanged.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 122,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 346,
+   "scenario": "BLOCKER 3 — multiple founder decisions > does not treat a cancelled decision as approval",
+   "invariants": [
+    "INV-A2"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A cancelled decision is not an approval; unchanged.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 123,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 362,
+   "scenario": "BLOCKER 3 — multiple founder decisions > opens a gate only for an approval",
+   "invariants": [
+    "INV-A2"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Only an approval opens a gate; unchanged.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 124,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 377,
+   "scenario": "BLOCKER 3 — multiple founder decisions > keeps the task gated while any decision is unanswered",
+   "invariants": [
+    "INV-A8"
+   ],
+   "disposition": "KEEP",
+   "rationale": "The task stays gated while any decision is unanswered; unchanged.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 125,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 389,
+   "scenario": "BLOCKER 3 — multiple founder decisions > does not let a decision on another task open this task’s gate",
+   "invariants": [
+    "INV-A7"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Another task's decision does not open this task's gate; unchanged.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 126,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 405,
+   "scenario": "BLOCKER 3 — multiple founder decisions > does not let an approval in one category open another",
+   "invariants": [
+    "INV-A3"
+   ],
+   "disposition": "KEEP",
+   "rationale": "An approval in one category does not open another; unchanged.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 127,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 420,
+   "scenario": "BLOCKER 3 — multiple founder decisions > fails closed when a category carries both an approval and a denial",
+   "invariants": [
+    "INV-A8"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Approval and denial in one category fail closed; unchanged.",
+   "target_slice": "PR-F",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 128,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 449,
+   "scenario": "HIGH 5 — validated policy is immutable > freezes the policy the orchestrator uses, including nested objects",
+   "invariants": [
+    "INV-R1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "The policy the orchestrator uses is deeply frozen; unchanged.",
+   "target_slice": "PR-A",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 129,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 460,
+   "scenario": "HIGH 5 — validated policy is immutable > refuses a runtime attempt to open the merge gate",
+   "invariants": [
+    "INV-R1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A runtime attempt to open the merge gate is refused; unchanged.",
+   "target_slice": "PR-A",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 130,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 469,
+   "scenario": "HIGH 5 — validated policy is immutable > refuses a runtime attempt to widen a review budget or a remote-write gate",
+   "invariants": [
+    "INV-R1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A runtime attempt to widen a budget or a remote-write gate is refused; unchanged.",
+   "target_slice": "PR-A",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 131,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 480,
+   "scenario": "HIGH 5 — validated policy is immutable > freezes what parsePolicy and defaultPolicy hand out",
+   "invariants": [
+    "INV-R1"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Both policy constructors hand out frozen objects; unchanged.",
+   "target_slice": "PR-A",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 132,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 488,
+   "scenario": "HIGH 6 — worker report authorization is atomic > will not let an unregistered worker complete a running task",
+   "invariants": [
+    "INV-L3"
+   ],
+   "disposition": "KEEP",
+   "rationale": "An unregistered worker cannot complete a running task; unchanged.",
+   "target_slice": "PR-G",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 133,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 513,
+   "scenario": "HIGH 6 — worker report authorization is atomic > will not let a registered worker without the lease complete a task",
+   "invariants": [
+    "INV-L5"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A registered worker without the lease cannot complete a task; unchanged.",
+   "target_slice": "PR-G",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 134,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 535,
+   "scenario": "HIGH 6 — worker report authorization is atomic > records exactly one row for a rejected report",
+   "invariants": [
+    "INV-S6"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A rejected report leaves exactly one audit row; unchanged.",
+   "target_slice": "PR-G",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 135,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/upgrade.test.ts",
+   "source_line": 561,
+   "scenario": "HIGH 6 — worker report authorization is atomic > still accepts a review from a registered worker that holds no lease",
+   "invariants": [
+    "INV-L3",
+    "INV-L5"
+   ],
+   "disposition": "REWRITE",
+   "rationale": "This scenario encodes DEBT-2, the deliberate Phase-0 simplification that a review report needs registration but not a claim. PR-G decides that question; the scenario returns asserting whatever PR-G decides, not the simplification.",
+   "target_slice": "PR-G",
+   "replacement": "conf/L3/PR-G/review-report-authorisation-as-decided-by-pr-g",
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+  },
+  {
+   "row": 136,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/workers.test.ts",
+   "source_line": 20,
+   "scenario": "dynamic worker pool > dispatches at most maxConcurrent=1 task per tick",
+   "invariants": [
+    "INV-R4"
+   ],
+   "disposition": "KEEP",
+   "rationale": "One dispatch per tick at capacity one; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 137,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/workers.test.ts",
+   "source_line": 32,
+   "scenario": "dynamic worker pool > dispatches up to maxConcurrent=3 when workers and tasks allow",
+   "invariants": [
+    "INV-R4"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Three dispatches when workers and tasks allow; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 138,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/workers.test.ts",
+   "source_line": 43,
+   "scenario": "dynamic worker pool > never hardcodes a worker count: raising the pool raises throughput",
+   "invariants": [
+    "INV-L2"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Raising the pool raises throughput: worker count is never hardcoded; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 139,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/workers.test.ts",
+   "source_line": 57,
+   "scenario": "dynamic worker pool > allows an idle worker to be removed without disturbing tasks",
+   "invariants": [
+    "INV-L2"
+   ],
+   "disposition": "KEEP",
+   "rationale": "An idle worker can be removed without disturbing tasks; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 140,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/workers.test.ts",
+   "source_line": 73,
+   "scenario": "dynamic worker pool > will not dispatch to a worker lacking the required capability",
+   "invariants": [
+    "INV-L2"
+   ],
+   "disposition": "KEEP",
+   "rationale": "A worker lacking the required capability is not dispatched to; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  },
+  {
+   "row": 141,
+   "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+   "source_file": "tests/workers.test.ts",
+   "source_line": 92,
+   "scenario": "dynamic worker pool > orders candidates by priority then age",
+   "invariants": [
+    "INV-R3"
+   ],
+   "disposition": "KEEP",
+   "rationale": "Candidates are ordered by priority then age; unchanged.",
+   "target_slice": "PR-H",
+   "replacement": null,
+   "audit_note": "Carried forward under the same scenario name."
+  }
+ ]
+}

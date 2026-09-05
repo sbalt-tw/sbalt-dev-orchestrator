@@ -1,0 +1,129 @@
+{
+  "manifest_version": 1,
+  "total_order": ["PR-0", "PR-A", "PR-B", "PR-C", "PR-D", "PR-E", "PR-F", "PR-G", "PR-H", "PR-I"],
+  "migration_chain": ["v1", "v2", "v3", "v4", "v5", "v6", "v7"],
+  "slices": [
+    {
+      "id": "PR-0",
+      "position": 1,
+      "title": "Specification",
+      "classification": "specification-only",
+      "merge_predecessor": null,
+      "migration": null,
+      "schema_predecessor": null,
+      "functional_dependencies": [],
+      "runtime_dependencies": [],
+      "summary": "The canonical repository specification, its machine-readable manifests, a non-runtime validator and that validator's CI wiring. No runtime source, no schema, no migration."
+    },
+    {
+      "id": "PR-A",
+      "position": 2,
+      "title": "Durable core",
+      "classification": "implementation",
+      "merge_predecessor": "PR-0",
+      "migration": "v1",
+      "schema_predecessor": null,
+      "schema_note": "PR-A defines v1; it has no schema predecessor.",
+      "functional_dependencies": ["PR-0"],
+      "runtime_dependencies": ["clock"],
+      "summary": "Database, migration runner with checksums and integrity verification, append-only history, the single injected clock."
+    },
+    {
+      "id": "PR-B",
+      "position": 3,
+      "title": "State machine",
+      "classification": "implementation",
+      "merge_predecessor": "PR-A",
+      "migration": null,
+      "schema_predecessor": "v1",
+      "functional_dependencies": ["PR-A"],
+      "runtime_dependencies": ["store", "clock"],
+      "summary": "Closed state vocabulary, explicit transition table, target resolution from persisted data, recovery shape."
+    },
+    {
+      "id": "PR-C",
+      "position": 4,
+      "title": "Principals and leases",
+      "classification": "implementation",
+      "merge_predecessor": "PR-B",
+      "migration": "v2",
+      "schema_predecessor": "v1",
+      "functional_dependencies": ["PR-A", "PR-B"],
+      "runtime_dependencies": ["store", "clock", "engine"],
+      "summary": "Principal registry and roles, claims with expiry and monotonic fencing, the singleton reviewer subject, reconciliation claims distinct from execution claims."
+    },
+    {
+      "id": "PR-D",
+      "position": 5,
+      "title": "Evidence and verdicts",
+      "classification": "implementation",
+      "merge_predecessor": "PR-C",
+      "migration": "v3",
+      "schema_predecessor": "v2",
+      "functional_dependencies": ["PR-A", "PR-B", "PR-C"],
+      "runtime_dependencies": ["store", "engine", "principals"],
+      "summary": "Immutable observations, content digests, snapshot computation, findings and append-only resolution events, source-role policy, round accounting."
+    },
+    {
+      "id": "PR-E",
+      "position": 6,
+      "title": "Effect journal",
+      "classification": "implementation",
+      "merge_predecessor": "PR-D",
+      "migration": "v4",
+      "schema_predecessor": "v3",
+      "schema_note": "v3 is produced by PR-D, which is therefore PR-E's schema predecessor as well as its merge predecessor.",
+      "functional_dependencies": ["PR-C", "PR-D"],
+      "runtime_dependencies": ["store", "clock", "principals"],
+      "summary": "Journal states, durable execution claims, probe-only reconciliation, redemption keys, registrability of action kinds."
+    },
+    {
+      "id": "PR-F",
+      "position": 7,
+      "title": "Authorization envelope",
+      "classification": "implementation",
+      "merge_predecessor": "PR-E",
+      "migration": "v5",
+      "schema_predecessor": "v4",
+      "functional_dependencies": ["PR-C", "PR-D", "PR-E"],
+      "runtime_dependencies": ["leases", "evidence", "journal", "engine"],
+      "summary": "Issuance, storage and redemption of the 25-field envelope; outcomes; waits; use ordinals; the one transaction that consumes a use and records an intent."
+    },
+    {
+      "id": "PR-G",
+      "position": 8,
+      "title": "Report ingestion",
+      "classification": "implementation",
+      "merge_predecessor": "PR-F",
+      "migration": "v6",
+      "schema_predecessor": "v5",
+      "functional_dependencies": ["PR-C", "PR-D", "PR-F"],
+      "runtime_dependencies": ["principals", "evidence", "authorization"],
+      "summary": "Transport identity, replay protection, contract validation, atomic authorisation and application of an accepted report."
+    },
+    {
+      "id": "PR-H",
+      "position": 9,
+      "title": "Scheduler",
+      "classification": "implementation",
+      "merge_predecessor": "PR-G",
+      "migration": "v7",
+      "schema_predecessor": "v6",
+      "functional_dependencies": ["PR-C", "PR-E", "PR-F", "PR-G"],
+      "runtime_dependencies": ["all of the above"],
+      "summary": "Dependency graph, lane limits, resource capacity, gate monotonicity, dispatch in one transaction, reconciliation sweeps."
+    },
+    {
+      "id": "PR-I",
+      "position": 10,
+      "title": "Operator surface",
+      "classification": "implementation",
+      "merge_predecessor": "PR-H",
+      "migration": null,
+      "schema_predecessor": "v7",
+      "functional_dependencies": ["PR-A", "PR-B", "PR-C", "PR-D", "PR-E", "PR-F", "PR-G", "PR-H"],
+      "runtime_dependencies": ["all"],
+      "summary": "CLI, read-only project adapter, the demo scenario, and the documentation-conformance check."
+    }
+  ]
+}

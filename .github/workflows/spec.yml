@@ -1,0 +1,72 @@
+name: spec
+
+# PR-0 is specification-only. There is deliberately no `build` step: the repository
+# ships no runtime source at this slice, so `tsc -p tsconfig.build.json` has nothing to
+# compile. PR-A introduces src/ and the build step returns with it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  specification:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Validate the specification
+        run: npm run spec:validate
+
+      - name: Tests
+        run: npm test
+
+  boundary:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: A specification-only PR adds no runtime source, schema or migration
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only "$BASE" "$HEAD")
+          echo "changed files:"
+          echo "$changed"
+
+          runtime=$(echo "$changed" | grep -E '^src/|\.sql$|(^|/)migrations?/' || true)
+          if [ -n "$runtime" ]; then
+            echo "::error::this branch adds runtime source, schema or migration files:"
+            echo "$runtime"
+            exit 1
+          fi
+
+          outside=$(echo "$changed" | grep -vE '^(spec/|tools/spec/|tests/spec/|\.github/workflows/|tsconfig\.json$|package\.json$|README\.md$)' || true)
+          if [ -n "$outside" ]; then
+            echo "::error::this branch touches paths outside the specification slice:"
+            echo "$outside"
+            exit 1
+          fi
+
+          echo "boundary holds: specification, its validator, its tests and its CI only."

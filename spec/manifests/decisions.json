@@ -1,0 +1,124 @@
+{
+  "manifest_version": 1,
+  "legal_states": ["APPROVED", "APPROVED_AS_AMENDED", "DEFERRED", "NOT_AUTHORIZED"],
+  "amendment_authority": ["FE-1", "FE-2", "FE-3", "FE-4", "FE-5", "FE-6", "FE-7", "FE-8", "FE-9"],
+  "decisions": [
+    {
+      "id": "D1",
+      "decision": "Approve the 47-invariant manifest and its sharpened statements.",
+      "state": "APPROVED_AS_AMENDED",
+      "amended_by": ["FE-1", "FE-2", "FE-3", "FE-4", "FE-5", "FE-6", "FE-7", "FE-8"],
+      "blocks": ["PR-0"],
+      "note": "The census stays at 47 invariants in 8 families. The errata are mapped into existing invariants; no invariant was added, removed, merged or renumbered."
+    },
+    {
+      "id": "D2",
+      "decision": "Approve the four-role ownership matrix, with PR-0 holding normative text only.",
+      "state": "APPROVED_AS_AMENDED",
+      "amended_by": ["FE-1"],
+      "blocks": ["PR-0"],
+      "note": "Every invariant declares a normative, enforcement, persistence and test owner. Where persistence is n/a it carries an explicit note saying why."
+    },
+    {
+      "id": "D3",
+      "decision": "Adopt the single authority domain constraint for Phase 0: one authoritative database, one host, recorded in the deployment note.",
+      "state": "APPROVED_AS_AMENDED",
+      "amended_by": ["FE-6"],
+      "blocks": ["PR-0", "PR-C"],
+      "note": "FE-6 adds that capacity 1 within the domain is measured in in-flight invocations, not in database claims alone."
+    },
+    {
+      "id": "D4",
+      "decision": "Approve the total order, the four-column dependency table and migrations v1 to v7.",
+      "state": "APPROVED_AS_AMENDED",
+      "amended_by": [],
+      "blocks": ["PR-0", "PR-A"],
+      "note": "Approved as drawn. PR-E depends on PR-D as its schema predecessor as well as its merge predecessor."
+    },
+    {
+      "id": "D5",
+      "decision": "Approve the journal state machine, the ambiguity policy, the registrability rule and the crash table.",
+      "state": "APPROVED_AS_AMENDED",
+      "amended_by": ["FE-4", "FE-5"],
+      "blocks": ["PR-0", "PR-E", "PR-F"],
+      "note": "FE-4 inserts a probe-only reconciliation state between UNKNOWN and any further execution. FE-5 makes abandonment an unknown truth, not a success."
+    },
+    {
+      "id": "D6",
+      "decision": "Approve the trust-boundary split: PR-C identity, PR-G transport, PR-D source policy, PR-F authority, PR-E effect.",
+      "state": "APPROVED_AS_AMENDED",
+      "amended_by": ["FE-1"],
+      "blocks": ["PR-0", "PR-D", "PR-G"],
+      "note": "FE-1 clarifies that authority is proved by authenticated issuance context and a durable principal record, never by a field inside the message."
+    },
+    {
+      "id": "D7",
+      "decision": "Approve the 25-field envelope, the action matrix, lossless identity and the evidence snapshot model.",
+      "state": "APPROVED_AS_AMENDED",
+      "amended_by": ["FE-1", "FE-2", "FE-3"],
+      "blocks": ["PR-0", "PR-F"],
+      "note": "FE-2 makes use_limit explicit in every kind and turns Git provenance into an all-or-nothing group. FE-3 requires the current snapshot to be recomputed at redemption rather than merely re-checked for existence."
+    },
+    {
+      "id": "D8",
+      "decision": "Approve severity unification, risk-label separation, R3, R4 and the no-default disposition rule.",
+      "state": "APPROVED_AS_AMENDED",
+      "amended_by": [],
+      "blocks": ["PR-0"],
+      "note": "Approved as drawn."
+    },
+    {
+      "id": "D9",
+      "decision": "Approve the review budgets: 2 rounds per slice, 3 for PR-F, 1 for PR-I, 2 for PR-0.",
+      "state": "APPROVED_AS_AMENDED",
+      "amended_by": [],
+      "blocks": ["PR-0"],
+      "note": "Approved, with R6 as the load-bearing rule: a finding naming a rule the specification lacks is a specification gap and stops the slice."
+    },
+    {
+      "id": "D10",
+      "decision": "Approve the test triage method and the obligation to produce the 141-row mapping inside PR-0.",
+      "state": "APPROVED_AS_AMENDED",
+      "amended_by": [],
+      "blocks": ["PR-0"],
+      "note": "Approved as drawn. The mapping is spec/manifests/test-triage.json and it is exactly 141 rows."
+    },
+    {
+      "id": "D11",
+      "decision": "Authorise opening PR-0 as a specification-only PR including a non-runtime validator, its tests and its CI wiring.",
+      "state": "APPROVED",
+      "amended_by": [],
+      "blocks": [],
+      "note": "Granted. PR-0 may be created, committed, pushed and opened. Merging it is not authorised."
+    },
+    {
+      "id": "D12",
+      "decision": "How to support a second independent authority domain, should one ever exist.",
+      "state": "DEFERRED",
+      "amended_by": [],
+      "blocks": ["a second authority domain"],
+      "note": "Revisit before any second host is introduced. Not a Phase 0 question and not a Phase 1A entry condition."
+    },
+    {
+      "id": "D13",
+      "decision": "Whether medium and low debt carried out of Phase 0 blocks Phase 1A.",
+      "state": "DEFERRED",
+      "amended_by": ["FE-8"],
+      "blocks": ["Phase 1A"],
+      "note": "Decided at the Phase 1A entry gate. It does not block the Phase 0 completion gate."
+    },
+    {
+      "id": "D14",
+      "decision": "Where the Phase-1A provider lifecycle specification lives: its own slice, or inside another approved specification slice.",
+      "state": "DEFERRED",
+      "amended_by": ["FE-8"],
+      "blocks": ["Phase 1A"],
+      "note": "Decided at the Phase 1A entry gate. FE-8 removes it from the Phase 0 completion gate: Phase 0 may complete with D14 undecided."
+    }
+  ],
+  "standing_authorizations": [
+    { "subject": "PR #1 closure", "state": "NOT_AUTHORIZED", "note": "PR #1 stays open, unmerged and unmodified. Closing it is step 5 of the PR #1 ordering and is requested separately." },
+    { "subject": "PR-0 merge", "state": "NOT_AUTHORIZED", "note": "PR-0 may be opened and reviewed. Merging it requires a separate Founder decision." },
+    { "subject": "Phase 1A implementation", "state": "NOT_AUTHORIZED", "note": "No real adapter implementation may begin until the Phase 1A entry gate is satisfied and Phase 1A is separately authorised." }
+  ]
+}
