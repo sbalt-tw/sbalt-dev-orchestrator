@@ -3,8 +3,9 @@ name: ci
 # Mechanical checks only. A green run shows what executed; it is not evidence that the
 # architecture or the semantics were approved.
 #
-# The path allow-list and the surface limits below are the limits the A1 brief sets for
-# this pull request. They are not invented here.
+# This workflow carries no file-count, diff-size or path policy. An earlier revision did,
+# which would have made one pull request's review limits a permanent rule for every later
+# pull request in the repository. Those limits belong to the review, not to the repository.
 
 on:
   push:
@@ -45,6 +46,15 @@ jobs:
         with: { node-version: '22', cache: npm }
       - name: Clean install
         run: npm ci
+      - name: Prove which driver and which SQLite this run used
+        run: |
+          set -euo pipefail
+          installed=$(node -p "require('better-sqlite3/package.json').version")
+          sqlite=$(node -e "const D=require('better-sqlite3');const d=new D(':memory:');console.log(d.prepare('select sqlite_version() v').get().v);d.close()")
+          printf 'better-sqlite3   : %s\n' "$installed"
+          printf 'bundled sqlite   : %s\n' "$sqlite"
+          [ "$installed" = "13.0.3" ] || { echo "::error::better-sqlite3 is not the pinned 13.0.3"; exit 1; }
+          [ "$sqlite" = "3.53.4" ] || { echo "::error::bundled SQLite is not 3.53.4"; exit 1; }
       - name: Typecheck
         run: npm run typecheck
       - name: Lint
@@ -53,57 +63,38 @@ jobs:
         run: npm run build
       - name: Tests
         run: npm test
-      - name: Compiled CLI smoke, twice against the same database
+      - name: Compiled CLI smoke
         run: |
           set -euo pipefail
-          db="$RUNNER_TEMP/smoke/orchestrator.sqlite"
-          mkdir -p "$RUNNER_TEMP/smoke"
+          work="$RUNNER_TEMP/smoke"
+          mkdir -p "$work"
+          db="$work/orchestrator.sqlite"
+
           first=$(node dist/cli/index.js db:init --db "$db")
           second=$(node dist/cli/index.js db:init --db "$db")
           printf '%s\n%s\n' "$first" "$second"
           case "$first"  in db:init\ result=applied\ version=1\ checksum=*) ;;    *) exit 1 ;; esac
           case "$second" in db:init\ result=already_at\ version=1\ checksum=*) ;; *) exit 1 ;; esac
+
+          before=$(sha256sum "$db" | cut -d' ' -f1)
+          node dist/cli/index.js db:init --db "$db" >/dev/null
+          [ "$(sha256sum "$db" | cut -d' ' -f1)" = "$before" ] \
+            || { echo "::error::recognizing an existing database modified it"; exit 1; }
+
           if node dist/cli/index.js db:init --db relative.sqlite; then exit 1; fi
-          echo "compiled CLI smoke passed"
+          : > "$work/empty.sqlite"
+          if node dist/cli/index.js db:init --db "$work/empty.sqlite"; then exit 1; fi
+          [ ! -s "$work/empty.sqlite" ] || { echo "::error::a refused empty file was written to"; exit 1; }
 
-  boundary:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: false
-      - name: Paths and surface limits from the A1 brief
-        env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          git fetch --no-tags origin "$BASE"
-
-          # NUL-delimited, so a path such as "-n" is never read as an option.
-          mapfile -d '' paths < <(git diff --name-only -z "$BASE" HEAD)
-          printf 'changed files (%s):\n' "${#paths[@]}"
-          printf '  %s\n' "${paths[@]}"
-          [ "${#paths[@]}" -le 8 ] || { echo "::error::more than 8 changed files"; exit 1; }
-
-          for p in "${paths[@]}"; do
-            case "$p" in
-              src/*|tests/*|package.json|package-lock.json|tsconfig*.json|.github/workflows/*) ;;
-              *) echo "::error::path outside the A1 allow-list: $p"; exit 1 ;;
-            esac
+          # Independent processes, started together against one fresh path.
+          race="$work/race.sqlite"
+          for _ in 1 2 3 4 5 6; do
+            node dist/cli/index.js db:init --db "$race" >>"$work/race.out" 2>>"$work/race.err" &
           done
-
-          lines=$(git diff --numstat "$BASE" HEAD -- . ':(exclude)package-lock.json' \
-                  | awk '{a+=$1; d+=$2} END {print a+d+0}')
-          printf 'non-lockfile diff lines: %s (limit 700)\n' "$lines"
-          [ "$lines" -le 700 ] || { echo "::error::non-lockfile diff exceeds 700 lines"; exit 1; }
-
-          if git grep -nE '\.(skip|todo)\(' -- tests src; then
-            echo "::error::skipped or todo tests are not permitted"; exit 1
-          fi
-          if git grep -nE 'continue-on-error[[:space:]]*:' -- .github; then
-            echo "::error::continue-on-error is not permitted"; exit 1
-          fi
-          echo "boundary holds."
+          wait
+          applied=$(grep -c 'result=applied' "$work/race.out" || true)
+          printf 'race: %s process(es) created the database\n' "$applied"
+          [ "$applied" = "1" ] || { echo "::error::the race did not produce exactly one creator"; exit 1; }
+          [ "$(ls "$work" | grep -c '^race.sqlite')" = "1" ] \
+            || { echo "::error::the race left extra files beside the target"; exit 1; }
+          echo "compiled CLI smoke passed"

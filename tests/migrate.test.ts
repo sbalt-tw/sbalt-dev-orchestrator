@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
 import {
-  initialise, InitError, checksumOf, canonicalBytes, withTransaction, V1, MIGRATIONS,
-  CHECKSUM_ALGORITHM,
+  initialise, InitError, canonicalBytes, checksumOf,
+  CHECKSUM_ALGORITHM, V1, V1_CHECKSUM, V1_CREATE,
 } from '../src/db/migrate.js';
 
 let dir: string;
@@ -17,7 +18,11 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-const expectCode = (fn: () => unknown, code: string) => {
+/** Digest of the target file, so "unmodified" is asserted over bytes, not over table names. */
+const digest = (p: string): string => createHash('sha256').update(readFileSync(p)).digest('hex');
+const entries = (): string[] => readdirSync(dir).sort();
+
+function expectCode(fn: () => unknown, code: string): void {
   try {
     fn();
   } catch (error) {
@@ -25,169 +30,238 @@ const expectCode = (fn: () => unknown, code: string) => {
     expect((error as InitError).code).toBe(code);
     return;
   }
-  throw new Error(`expected ${code}, but nothing was thrown`);
-};
+  throw new Error(`expected ${code}, but the call returned normally`);
+}
 
-describe('the v1 migration', () => {
-  it('is the only migration and creates only schema_migrations', () => {
-    expect(MIGRATIONS).toHaveLength(1);
-    expect(V1.statements).toHaveLength(1);
-    expect(V1.statements[0]).toMatch(/^CREATE TABLE schema_migrations \(/);
-    expect(V1.statements.join(' ')).not.toMatch(/task|lane|project|worker|lease/i);
+/** Writes a database with an arbitrary schema, then closes it, leaving no sidecars. */
+function seed(path: string, statements: readonly string[]): void {
+  const db = new Database(path);
+  for (const statement of statements) db.exec(statement);
+  db.close();
+}
+
+const REGISTRY_ROW = "INSERT INTO schema_migrations VALUES (1, '" + V1_CHECKSUM + "', '2026-01-01T00:00:00.000Z')";
+
+describe('checksum identity', () => {
+  // The expected value is written here as a literal. It is not derived from V1, so editing
+  // V1's bytes fails this test instead of silently redefining the released identity.
+  it('matches the frozen golden for version 1', () => {
+    expect(checksumOf(V1)).toBe('f2e2aa4ad993a7b4562db35e1e1196dd4843470440e36b942dc87843ef6782c8');
+    expect(V1_CHECKSUM).toBe('f2e2aa4ad993a7b4562db35e1e1196dd4843470440e36b942dc87843ef6782c8');
   });
 
-  it('derives its checksum from frozen bytes, not from any database', () => {
-    expect(CHECKSUM_ALGORITHM).toBe('dev-orch/migration-checksum/v1');
-    expect(canonicalBytes(V1).toString('utf8')).toBe(
-      `dev-orch/migration/v1\n${V1.statements[0]};\n`,
+  it('pins the exact v1 statement text', () => {
+    expect(V1.statements).toEqual([V1_CREATE]);
+    expect(V1_CREATE).toBe(
+      'CREATE TABLE schema_migrations (\n'
+      + '  version INTEGER PRIMARY KEY,\n'
+      + '  checksum TEXT NOT NULL,\n'
+      + '  applied_at TEXT NOT NULL\n'
+      + ')',
     );
-    expect(checksumOf(V1)).toMatch(/^[0-9a-f]{64}$/);
-    expect(checksumOf(V1)).toBe(checksumOf(V1));
+  });
+
+  it('carries the algorithm identity and a length prefix inside the preimage', () => {
+    const preimage = canonicalBytes(V1).toString('utf8');
+    expect(preimage.startsWith(`${CHECKSUM_ALGORITHM}\n`)).toBe(true);
+    expect(preimage).toContain(`len:${Buffer.byteLength(V1_CREATE, 'utf8')}\n`);
+  });
+
+  it('separates the sequences that the ";\\n" scheme made identical', () => {
+    const a = { version: 1, statements: ['SELECT 1 --', 'SELECT 2'] };
+    const b = { version: 1, statements: ['SELECT 1 --;\nSELECT 2'] };
+    expect(a.statements.join(';\n')).toBe(b.statements.join(';\n')); // the old collision
+    expect(checksumOf(a)).not.toBe(checksumOf(b));
+  });
+
+  it('separates migrations that differ only in version', () => {
+    expect(checksumOf({ version: 2, statements: V1.statements })).not.toBe(V1_CHECKSUM);
   });
 });
 
-describe('db:init on an acceptable database', () => {
-  it('applies v1 to a database that does not exist yet', () => {
-    expect(existsSync(dbPath)).toBe(false);
-    const outcome = initialise(dbPath);
-    expect(outcome).toEqual({ status: 'applied', version: 1, checksum: checksumOf(V1) });
-    expect(existsSync(dbPath)).toBe(true);
+describe('creating a database that does not exist', () => {
+  it('applies v1 and reports the frozen checksum', () => {
+    expect(initialise(dbPath)).toEqual({ status: 'applied', version: 1, checksum: V1_CHECKSUM });
   });
 
-  it('applies v1 to an existing but provably empty database', () => {
-    new Database(dbPath).close();
-    expect(initialise(dbPath).status).toBe('applied');
-  });
-
-  it('creates exactly one table and one recorded version', () => {
+  it('leaves exactly one schema object, one row, and no temporary artifacts', () => {
     initialise(dbPath);
-    const db = new Database(dbPath, { readonly: true });
-    const objects = db.prepare("SELECT name, type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")
-      .all() as { name: string; type: string }[];
-    const rows = db.prepare('SELECT version, checksum, applied_at FROM schema_migrations')
-      .all() as { version: number; checksum: string; applied_at: string }[];
+    const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    expect(db.prepare('SELECT type, name, sql FROM sqlite_master').all())
+      .toEqual([{ type: 'table', name: 'schema_migrations', sql: V1_CREATE }]);
+    expect(db.prepare('SELECT version, checksum FROM schema_migrations').all())
+      .toEqual([{ version: 1, checksum: V1_CHECKSUM }]);
+    expect(db.pragma('integrity_check', { simple: true })).toBe('ok');
     db.close();
-    expect(objects).toEqual([{ name: 'schema_migrations', type: 'table' }]);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.version).toBe(1);
-    expect(rows[0]?.checksum).toBe(checksumOf(V1));
-    expect(rows[0]?.applied_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(entries()).toEqual(['orchestrator.sqlite']);
   });
 
-  it('survives close and reopen with the same version and checksum', () => {
-    const first = initialise(dbPath);
-    const second = initialise(dbPath);
-    expect(second).toEqual({ status: 'already_at', version: 1, checksum: first.checksum });
-  });
-
-  it('is idempotent: the second run does not rewrite the applied row', () => {
+  it('recognizes its own database on a second call and does not rewrite it', () => {
     initialise(dbPath);
-    const before = new Database(dbPath, { readonly: true })
-      .prepare('SELECT applied_at FROM schema_migrations WHERE version = 1')
-      .get() as { applied_at: string };
-    initialise(dbPath);
-    initialise(dbPath);
-    const after = new Database(dbPath, { readonly: true })
-      .prepare('SELECT applied_at, COUNT(*) AS n FROM schema_migrations WHERE version = 1')
-      .get() as { applied_at: string; n: number };
-    expect(after.applied_at).toBe(before.applied_at);
-    expect(after.n).toBe(1);
-  });
-
-  it('enables foreign key enforcement on every connection', () => {
-    initialise(dbPath);
-    const db = new Database(dbPath);
-    db.pragma('foreign_keys = ON');
-    expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
-    db.close();
+    const before = digest(dbPath);
+    expect(initialise(dbPath)).toEqual({ status: 'already_at', version: 1, checksum: V1_CHECKSUM });
+    expect(digest(dbPath)).toBe(before);
+    expect(entries()).toEqual(['orchestrator.sqlite']);
   });
 });
 
-describe('db:init fails closed', () => {
-  it('refuses a relative path', () => expectCode(() => initialise('relative/x.sqlite'), 'E_DB_PATH_NOT_ABSOLUTE'));
+describe('paths', () => {
+  it('refuses a relative path', () => expectCode(() => initialise('relative.sqlite'), 'E_DB_PATH_NOT_ABSOLUTE'));
 
   it('refuses a missing parent directory and does not create it', () => {
-    const nested = join(dir, 'absent', 'x.sqlite');
+    const nested = join(dir, 'absent', 'orchestrator.sqlite');
     expectCode(() => initialise(nested), 'E_DB_PARENT_MISSING');
-    expect(existsSync(join(dir, 'absent'))).toBe(false);
+    expect(entries()).toEqual([]);
   });
 
-  it('refuses a file that is not a SQLite database', () => {
-    writeFileSync(dbPath, 'this is not a database');
+  it('refuses a directory in the target position', () => {
+    mkdirSync(dbPath);
     expectCode(() => initialise(dbPath), 'E_DB_NOT_SQLITE');
   });
+});
 
-  it('refuses a database holding objects it did not create', () => {
-    const db = new Database(dbPath);
-    db.exec('CREATE TABLE tasks (id TEXT PRIMARY KEY)');
-    db.close();
+describe('refusing an existing target without touching it', () => {
+  it('refuses an existing empty file and leaves it empty', () => {
+    writeFileSync(dbPath, '');
+    expectCode(() => initialise(dbPath), 'E_DB_EMPTY_FILE');
+    expect(statSync(dbPath).size).toBe(0);
+    expect(entries()).toEqual(['orchestrator.sqlite']);
+  });
+
+  it('refuses a file that is not a SQLite database and leaves its bytes alone', () => {
+    writeFileSync(dbPath, 'not a database');
+    const before = digest(dbPath);
+    expectCode(() => initialise(dbPath), 'E_DB_NOT_SQLITE');
+    expect(digest(dbPath)).toBe(before);
+    expect(entries()).toEqual(['orchestrator.sqlite']);
+  });
+
+  it('refuses a target that has a rollback journal beside it, without opening it', () => {
+    initialise(dbPath);
+    writeFileSync(`${dbPath}-journal`, 'pretend this is a hot journal');
+    const before = digest(dbPath);
+    const journalBefore = digest(`${dbPath}-journal`);
+    expectCode(() => initialise(dbPath), 'E_DB_RECOVERY_REQUIRED');
+    expect(digest(dbPath)).toBe(before);
+    expect(digest(`${dbPath}-journal`)).toBe(journalBefore);
+  });
+
+  it('refuses a target that has a write-ahead log beside it', () => {
+    initialise(dbPath);
+    writeFileSync(`${dbPath}-wal`, '');
+    expectCode(() => initialise(dbPath), 'E_DB_RECOVERY_REQUIRED');
+  });
+
+  // The production classifier applies no name predicate at all, so this table is an
+  // ordinary extra object. Under `NOT LIKE 'sqlite_%'` it was invisible, because LIKE
+  // treats "_" as a single-character wildcard.
+  it('does not hide a user table whose name begins with "sqlite"', () => {
+    seed(dbPath, [V1_CREATE, REGISTRY_ROW, 'CREATE TABLE sqliteXevil (secret TEXT)']);
+    const before = digest(dbPath);
+    expectCode(() => initialise(dbPath), 'E_UNKNOWN_SCHEMA');
+    expect(digest(dbPath)).toBe(before);
+  });
+
+  it('refuses a database whose only object is a table named like a SQLite internal one', () => {
+    seed(dbPath, ['CREATE TABLE sqliteXstat (a TEXT)']);
     expectCode(() => initialise(dbPath), 'E_UNKNOWN_SCHEMA');
   });
 
-  it('refuses a registry with the wrong shape', () => {
-    const db = new Database(dbPath);
-    db.exec('CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, checksum TEXT NOT NULL)');
+  it('refuses a genuine SQLite internal object created by AUTOINCREMENT', () => {
+    seed(dbPath, [V1_CREATE, REGISTRY_ROW, 'CREATE TABLE counters (id INTEGER PRIMARY KEY AUTOINCREMENT)']);
+    const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    const names = (db.prepare('SELECT name FROM sqlite_master').all() as { name: string }[]).map((r) => r.name);
     db.close();
+    expect(names).toContain('sqlite_sequence');
+    expectCode(() => initialise(dbPath), 'E_UNKNOWN_SCHEMA');
+  });
+
+  it.each([
+    ['a view', 'CREATE VIEW extra AS SELECT 1'],
+    ['an index', 'CREATE INDEX extra ON schema_migrations (checksum)'],
+    ['a trigger', 'CREATE TRIGGER extra AFTER INSERT ON schema_migrations BEGIN SELECT 1; END'],
+    ['a table', 'CREATE TABLE extra (a TEXT)'],
+  ])('refuses a database that also holds %s', (_label, statement) => {
+    seed(dbPath, [V1_CREATE, REGISTRY_ROW, statement]);
+    expectCode(() => initialise(dbPath), 'E_UNKNOWN_SCHEMA');
+  });
+});
+
+describe('registry shape and contents', () => {
+  it.each([
+    ['a CHECK constraint', 'CREATE TABLE schema_migrations (\n  version INTEGER PRIMARY KEY,\n  checksum TEXT NOT NULL CHECK (length(checksum) = 64),\n  applied_at TEXT NOT NULL\n)'],
+    ['a UNIQUE constraint', 'CREATE TABLE schema_migrations (\n  version INTEGER PRIMARY KEY,\n  checksum TEXT NOT NULL UNIQUE,\n  applied_at TEXT NOT NULL\n)'],
+    ['a conflict clause', 'CREATE TABLE schema_migrations (\n  version INTEGER PRIMARY KEY ON CONFLICT REPLACE,\n  checksum TEXT NOT NULL,\n  applied_at TEXT NOT NULL\n)'],
+    ['different whitespace', 'CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)'],
+  ])('refuses a registry that carries %s', (_label, create) => {
+    seed(dbPath, [create, REGISTRY_ROW]);
+    expectCode(() => initialise(dbPath), 'E_UNKNOWN_SCHEMA');
+  });
+
+  it('refuses a registry with an extra column', () => {
+    seed(dbPath, ['CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL, note TEXT)']);
+    expectCode(() => initialise(dbPath), 'E_UNKNOWN_SCHEMA');
+  });
+
+  it('refuses an empty registry', () => {
+    seed(dbPath, [V1_CREATE]);
     expectCode(() => initialise(dbPath), 'E_REGISTRY_MALFORMED');
   });
 
-  it('refuses a registry with the right shape and no rows', () => {
-    const db = new Database(dbPath);
-    db.exec(V1.statements[0] as string);
-    db.close();
+  it('refuses a registry recording more than one version', () => {
+    seed(dbPath, [V1_CREATE, REGISTRY_ROW, `INSERT INTO schema_migrations VALUES (2, '${V1_CHECKSUM}', 'x')`]);
     expectCode(() => initialise(dbPath), 'E_REGISTRY_MALFORMED');
   });
 
-  it('refuses a recorded version this runner does not know', () => {
-    const db = new Database(dbPath);
-    db.exec(V1.statements[0] as string);
-    db.prepare('INSERT INTO schema_migrations VALUES (?, ?, ?)').run(7, checksumOf(V1), 'x');
-    db.close();
+  it('refuses a version this runner does not know', () => {
+    seed(dbPath, [V1_CREATE, `INSERT INTO schema_migrations VALUES (2, '${V1_CHECKSUM}', 'x')`]);
     expectCode(() => initialise(dbPath), 'E_UNKNOWN_VERSION');
   });
 
-  it('refuses a checksum that does not match the frozen bytes', () => {
-    initialise(dbPath);
-    const db = new Database(dbPath);
-    db.prepare('UPDATE schema_migrations SET checksum = ? WHERE version = 1').run('0'.repeat(64));
-    db.close();
+  it('refuses version 1 applied from different bytes', () => {
+    seed(dbPath, [V1_CREATE, `INSERT INTO schema_migrations VALUES (1, '${'0'.repeat(64)}', 'x')`]);
+    const before = digest(dbPath);
     expectCode(() => initialise(dbPath), 'E_CHECKSUM_MISMATCH');
-  });
-
-  it('leaves a refused database unmodified', () => {
-    const db = new Database(dbPath);
-    db.exec('CREATE TABLE tasks (id TEXT PRIMARY KEY)');
-    db.close();
-    expectCode(() => initialise(dbPath), 'E_UNKNOWN_SCHEMA');
-    const after = new Database(dbPath, { readonly: true });
-    const objects = after.prepare("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")
-      .all() as { name: string }[];
-    after.close();
-    expect(objects).toEqual([{ name: 'tasks' }]);
+    expect(digest(dbPath)).toBe(before);
   });
 });
 
-describe('a migration that fails part way is logically rolled back', () => {
-  // The production runner accepts no SQL, so the fault is injected into the shared
-  // transaction wrapper here rather than into the CLI. This proves the wrapper rolls back
-  // the same way the real apply path uses it; it does not prove the v1 statements
-  // themselves can fail.
-  it('leaves no version row, no partial schema, and a database that still opens', () => {
-    const db = new Database(dbPath);
-    expect(() => withTransaction(db, () => {
-      db.exec(V1.statements[0] as string);
-      throw new Error('deterministic fault after the table was created');
-    })).toThrow(/deterministic fault/);
-    db.close();
+// These two patch the driver from the test side. Nothing in the production module accepts a
+// callback, a statement or an injection parameter, so this is the only way to observe the
+// production path failing, and a test that patched nothing would pass even if the production
+// guard were deleted.
+describe('the production write path, observed by patching the driver', () => {
+  const proto = Database.prototype as unknown as {
+    pragma: (source: string, options?: unknown) => unknown;
+    prepare: (source: string) => unknown;
+  };
 
-    const after = new Database(dbPath);
-    const objects = after.prepare("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")
-      .all() as { name: string }[];
-    const integrity = after.pragma('integrity_check', { simple: true });
-    after.close();
+  it('fails closed when foreign key enforcement cannot be confirmed, and publishes nothing', () => {
+    const original = proto.pragma;
+    proto.pragma = function patched(source: string, options?: unknown): unknown {
+      if (source === 'foreign_keys') return 0;
+      return original.call(this, source, options);
+    };
+    try {
+      expectCode(() => initialise(dbPath), 'E_FOREIGN_KEYS_NOT_ENABLED');
+    } finally {
+      proto.pragma = original;
+    }
+    expect(entries()).toEqual([]);
+  });
 
-    expect(objects).toEqual([]);
-    expect(integrity).toBe('ok');
-    expect(initialise(dbPath).status).toBe('applied');
+  it('rolls the migration back when the version row fails, and publishes nothing', () => {
+    const original = proto.prepare;
+    proto.prepare = function patched(source: string): unknown {
+      if (source.startsWith('INSERT INTO schema_migrations')) throw new Error('injected');
+      return original.call(this, source);
+    };
+    try {
+      expectCode(() => initialise(dbPath), 'E_CREATE_FAILED');
+    } finally {
+      proto.prepare = original;
+    }
+    // No target, and no temporary database, journal or write-ahead file left behind.
+    expect(entries()).toEqual([]);
   });
 });

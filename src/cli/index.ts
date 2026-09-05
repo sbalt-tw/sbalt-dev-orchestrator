@@ -2,14 +2,19 @@
 // A1 command line: dev-orch db:init --db <absolute-path>
 //
 // --db is required, must be absolute, and is never inferred from the working directory,
-// the environment or a built-in default. Missing parent directories are not created.
+// the environment or a built-in default. Missing parent directories are not created. The
+// command accepts no SQL, no migration path, no registry and no fault-injection parameter.
 
-import { InitError, initialise } from '../db/migrate.js';
+import { InitError, REASON_TEXT, initialise } from '../db/migrate.js';
+import type { ReasonCode } from '../db/migrate.js';
 
-const USAGE = 'usage: dev-orch db:init --db <absolute-path>';
-
-function fail(code: string, message: string): number {
-  process.stderr.write(`db:init error=${code} ${message}\n`);
+/**
+ * Every failure leaves through here, so the only bytes on stderr are a fixed reason code
+ * and its fixed text. Arguments, driver messages, native stacks, journal details and
+ * database values are never echoed, including for an error this command did not anticipate.
+ */
+function fail(code: ReasonCode): number {
+  process.stderr.write(`db:init error=${code} ${REASON_TEXT[code]}\n`);
   return 1;
 }
 
@@ -19,28 +24,22 @@ function parseDbFlag(args: readonly string[]): string {
     const arg = args[i];
     if (arg === '--db') {
       const next = args[i + 1];
-      if (next === undefined || next.startsWith('--')) {
-        throw new InitError('E_DB_ARG_MISSING', '--db requires a value');
-      }
+      if (next === undefined || next.startsWith('--')) throw new InitError('E_DB_ARG_MISSING');
       value = next;
       i += 1;
     } else if (arg !== undefined && arg.startsWith('--db=')) {
       value = arg.slice('--db='.length);
     } else {
-      throw new InitError('E_DB_ARG_MISSING', `unexpected argument "${String(arg)}"`);
+      throw new InitError('E_DB_ARG_MISSING');
     }
   }
-  if (value === undefined || value === '') {
-    throw new InitError('E_DB_ARG_MISSING', '--db is required');
-  }
+  if (value === undefined || value === '') throw new InitError('E_DB_ARG_MISSING');
   return value;
 }
 
 export function run(argv: readonly string[]): number {
   const [command, ...rest] = argv;
-  if (command !== 'db:init') {
-    return fail('E_DB_ARG_MISSING', USAGE);
-  }
+  if (command !== 'db:init') return fail('E_DB_ARG_MISSING');
   try {
     const outcome = initialise(parseDbFlag(rest));
     process.stdout.write(
@@ -48,8 +47,7 @@ export function run(argv: readonly string[]): number {
     );
     return 0;
   } catch (error) {
-    if (error instanceof InitError) return fail(error.code, error.message);
-    throw error;
+    return fail(error instanceof InitError ? error.code : 'E_INTERNAL');
   }
 }
 
