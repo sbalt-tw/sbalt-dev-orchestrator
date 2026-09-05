@@ -1,0 +1,130 @@
+name: c0-a
+
+# Mechanical evidence only.
+#
+# These jobs prove which commit ran, that the declared base is the merge-base, and that the
+# changed paths stay inside this slice. They do not and cannot show that anything in
+# spec/C0-A.md is correct; semantic authority comes from a Founder decision and an
+# independent review of an exact head, both outside this repository.
+#
+# There is no build step: main ships no src/**/*.ts, so `tsc -p tsconfig.build.json` has
+# nothing to compile and fails identically on the base commit. That is base parity, never a
+# pass, and the build configuration is not relaxed to manufacture a green.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  identity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Prove which commit this run executed
+        if: github.event_name == 'pull_request'
+        env:
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          actual=$(git rev-parse HEAD)
+          printf 'checked out head : %s\n' "$actual"
+          printf 'event head       : %s\n' "$EVENT_HEAD"
+          [ "$actual" = "$EVENT_HEAD" ] || { echo "::error::checkout is not the reviewed head"; exit 1; }
+
+          git fetch --no-tags origin "$EVENT_BASE"
+          mb=$(git merge-base "$EVENT_BASE" HEAD)
+          printf 'declared base    : %s\n' "$EVENT_BASE"
+          printf 'merge-base       : %s\n' "$mb"
+          [ "$mb" = "$EVENT_BASE" ] || { echo "::error::merge-base is not the declared base"; exit 1; }
+
+          printf 'head tree        : %s\n' "$(git rev-parse 'HEAD^{tree}')"
+          printf 'diff algorithm   : diff-identity/v1\n'
+          printf 'diff identity    : %s\n' \
+            "$(git diff --no-color --no-ext-diff --no-renames --binary "$EVENT_BASE".."$actual" \
+               | git hash-object --stdin)"
+
+  boundary:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Changed paths stay inside this slice
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$BASE"
+
+          # NUL-delimited, so a path such as "-n" is never read as an option.
+          mapfile -d '' paths < <(git diff --name-only -z "$BASE" HEAD)
+          printf 'changed paths (%s):\n' "${#paths[@]}"
+          printf '  %s\n' "${paths[@]}"
+
+          for p in "${paths[@]}"; do
+            case "$p" in
+              src/*|*.sql|migrations/*|*/migrations/*)
+                echo "::error::this slice adds runtime, schema or migration: $p"; exit 1 ;;
+              spec/*|.github/workflows/*|README.md) ;;
+              *) echo "::error::path outside this slice: $p"; exit 1 ;;
+            esac
+          done
+          echo "boundary holds."
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Markdown format lint
+        run: |
+          set -uo pipefail
+          status=0
+          while IFS= read -r -d '' f; do
+            printf 'checking %s\n' "$f"
+            if grep -n "$(printf '\t')" "$f"; then
+              echo "::error file=$f::tab character"; status=1
+            fi
+            if grep -n ' $' "$f"; then
+              echo "::error file=$f::trailing whitespace"; status=1
+            fi
+            if grep -n "$(printf '\r')" "$f"; then
+              echo "::error file=$f::carriage return"; status=1
+            fi
+            if ! awk -v f="$f" 'length($0) > 100 {
+                   printf "::error file=%s,line=%d::line longer than 100 characters\n", f, NR; bad=1
+                 } END { exit bad ? 1 : 0 }' "$f"; then
+              status=1
+            fi
+            if [ -n "$(tail -c 1 "$f")" ]; then
+              echo "::error file=$f::no trailing newline"; status=1
+            fi
+          done < <(find spec README.md -type f -name '*.md' -print0)
+          exit "$status"
+
+  toolchain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
