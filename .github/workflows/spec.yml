@@ -1,0 +1,74 @@
+name: spec
+
+# There is no `build` step. The repository ships no runtime source at this slice, so
+# `tsc -p tsconfig.build.json` has nothing to compile and fails identically on the base
+# commit. That is recorded as NOT_APPLICABLE / BASE_PARITY_CONFIRMED, never as a pass, and
+# the build config is not relaxed to manufacture a green.
+#
+# The docs-only boundary is conditional. It applies only while the BASE commit does not yet
+# carry the constitution. The marker is read from the base, never from the head, so a pull
+# request cannot declare itself finished in order to escape the boundary.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  specification:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Validate the constitution
+        run: npm run spec:validate
+      - name: Tests, including the negative fixtures
+        run: npm test
+
+  boundary:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: A docs-only slice adds no runtime source, schema or migration
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if git cat-file -e "$BASE:spec/CONSTITUTION.md" 2>/dev/null; then
+            echo "The base already carries the constitution; the docs-only boundary no longer applies."
+            exit 0
+          fi
+
+          echo "The base does not yet carry the constitution. Enforcing the docs-only boundary."
+          changed=$(git diff --name-only "$BASE" "$HEAD")
+          echo "$changed"
+
+          runtime=$(echo "$changed" | grep -E '^src/|\.sql$|(^|/)migrations?/' || true)
+          if [ -n "$runtime" ]; then
+            echo "::error::this branch adds runtime source, schema or migration files:"; echo "$runtime"; exit 1
+          fi
+
+          outside=$(echo "$changed" | grep -vE '^(spec/|tools/spec/|tests/spec/|\.github/workflows/|tsconfig\.json$|package\.json$|README\.md$)' || true)
+          if [ -n "$outside" ]; then
+            echo "::error::this branch touches paths outside the specification slice:"; echo "$outside"; exit 1
+          fi
+
+          files=$(echo "$changed" | grep -c . || true)
+          total=$(git diff --numstat "$BASE" "$HEAD" -- . ':(exclude)package-lock.json' | awk '{a+=$1; d+=$2} END {print a+d}')
+          echo "changed files: $files (cap 8)"
+          echo "total reviewed diff, lockfile excluded: $total (cap 1500)"
+          [ "$files" -le 8 ] || { echo "::error::file cap exceeded"; exit 1; }
+          [ "$total" -le 1500 ] || { echo "::error::diff cap exceeded"; exit 1; }
+
+          echo "boundary holds."
