@@ -1,16 +1,30 @@
 {
   "manifest_version": 1,
   "document": "spec/CONSTITUTION.md",
-  "scope": "governance only; no domain design",
-  "reviewed_baseline": null,
-  "reviewed_baseline_note": "null means no reviewed baseline exists yet. It never means unchanged. A baseline may be recorded only with an external binding: the Founder decision id that approved it and the merge commit that landed it.",
+  "scope": "governance only; no domain design; introduces no requirement absent from the document",
+  "reviewed_baseline": {
+    "state": "NOT_ESTABLISHED",
+    "note": "No authoritative baseline exists. Nothing may be described as unchanged since review. A baseline is established only at merge, from records outside this pull request. Neither null nor an empty string is ever a valid baseline.",
+    "tuple": null
+  },
+  "baseline_tuple_components": [
+    "repository_identity", "pr_number", "review_base_sha", "merge_base_sha",
+    "reviewed_head_sha", "reviewed_head_tree_sha", "diff_identity",
+    "reviewer_verdict_identity", "founder_decision_reference",
+    "merge_commit_sha", "merged_tree_sha"
+  ],
+  "review_tuple_components": [
+    "repository", "pull_request", "base_sha", "merge_base_sha", "head_sha",
+    "head_tree_sha", "diff_identity", "ci_evidence_identity", "reviewer_verdict_identity"
+  ],
+  "review_tuple_change_invalidates_verdict": true,
   "proof_classes": [
-    { "id": "A", "name": "structural validation", "proves": "well-formed and internally complete" },
-    { "id": "B", "name": "change detection", "proves": "unchanged since a reviewed commit" },
+    { "id": "A", "name": "structural validation", "proves": "well-formed and internally complete", "mechanical": true },
+    { "id": "B", "name": "change detection", "proves": "unchanged against an externally bound baseline", "mechanical": true },
     { "id": "C", "name": "semantic authority", "proves": "the content means what it should", "mechanical": false }
   ],
   "authority_root": [
-    "git immutable commit identity",
+    "git immutable commit and tree identity",
     "the GitHub review and merge record",
     "an explicit Founder decision",
     "an independent reviewer verdict on the complete diff at an exact head"
@@ -18,55 +32,99 @@
   "validator_non_goals": [
     "judging whether a normative sentence is true",
     "judging whether a mapping is semantically sound",
+    "counting load-bearing concepts",
     "standing in for a reviewer or a Founder decision",
     "proving that a named test asserts what its name claims",
     "establishing its own authority root"
   ],
+  "normative_markdown_paths": ["spec/CONSTITUTION.md"],
   "surface_caps": {
     "changed_files": 8,
-    "changed_files_include_generated": true,
     "handwritten_normative_lines": 700,
     "total_reviewed_diff_lines": 1500,
-    "total_diff_exclusions": ["lockfile"],
     "load_bearing_concepts": 5,
+    "counting": {
+      "base_and_head_from": "the exact review tuple, never a moving ref",
+      "changed_files": "every changed path, including generated files and the lockfile; a rename or copy counts both source and destination",
+      "handwritten_normative_lines": "additions plus deletions on normative_markdown_paths",
+      "total_reviewed_diff_lines": "additions plus deletions across every text file; only lockfile lines may be excluded",
+      "binary_files": "fail closed; a binary change is never counted as zero lines",
+      "per_file_line_cap": "none exists and none may be inferred"
+    },
     "prohibited_evasions": [
-      "generating manifests, fixtures or rendered documents to stay under the handwritten limit",
-      "splitting content across files to duck the per-file cap",
-      "excluding anything but a lockfile from the total diff"
-    ],
-    "on_exceed": "split along a concept boundary; never redistribute lines"
+      "placing a normative requirement in a file outside normative_markdown_paths",
+      "generating content to stay under the handwritten limit",
+      "bundling rules that can change independently into one declared concept",
+      "omitting a model from the declared concept list"
+    ]
   },
+  "concepts": [
+    "authority and proof model",
+    "exact review identity and CI identity",
+    "finding closure and review budget",
+    "phase registry, gates and ordering",
+    "surface boundaries"
+  ],
+  "concept_count_is_semantic_assessment": true,
   "severity_vocabulary": ["BLOCKER", "HIGH", "MEDIUM", "LOW"],
   "critical_is_recorded_as": "BLOCKER",
   "disposition_vocabulary": ["FIX", "ACCEPT", "DEFER"],
   "disposition_default": null,
-  "budgets": [
-    { "target": "constitution", "completed_verdict_rounds": 2, "extendable_once": false },
-    { "target": "checkpoint SPEC-B", "completed_verdict_rounds": 2, "extendable_once": false },
-    { "target": "checkpoint SPEC-D", "completed_verdict_rounds": 2, "extendable_once": false },
-    { "target": "checkpoint SPEC-F", "completed_verdict_rounds": 2, "extendable_once": false },
-    { "target": "checkpoint SPEC-A", "completed_verdict_rounds": 1, "extendable_once": true },
-    { "target": "checkpoint SPEC-C", "completed_verdict_rounds": 1, "extendable_once": true },
-    { "target": "checkpoint SPEC-E", "completed_verdict_rounds": 1, "extendable_once": true },
-    { "target": "checkpoint SPEC-G", "completed_verdict_rounds": 1, "extendable_once": true },
-    { "target": "checkpoint SPEC-H", "completed_verdict_rounds": 1, "extendable_once": true },
-    { "target": "checkpoint SPEC-I", "completed_verdict_rounds": 1, "extendable_once": true },
-    { "target": "implementation slice", "completed_verdict_rounds": 2, "extendable_once": false },
-    { "target": "implementation PR-F", "completed_verdict_rounds": 3, "extendable_once": false },
-    { "target": "implementation PR-I", "completed_verdict_rounds": 1, "extendable_once": true }
-  ],
-  "single_round_extension": {
-    "authority": "D32 option B",
-    "applies_to": ["SPEC-A", "SPEC-C", "SPEC-E", "SPEC-G", "SPEC-H", "SPEC-I", "PR-I"],
-    "rules": [
-      "one additional completed verdict round is permitted after a repair within the approved specification",
-      "the additional round reviews the exact new head",
-      "at most two completed verdicts; there is no third round",
-      "a specification gap still stops immediately and returns to the Founder",
-      "a no-verdict invocation consumes no completed round and is not retried automatically",
-      "a CLEAN or APPROVE verdict at the old head never carries to the new head"
+  "stage_registry": {
+    "closed": true,
+    "amendment": "adding, removing or reordering a stage is a constitutional amendment requiring a new semantic review and a Founder decision",
+    "completion_inferred_from_existing_rows": false,
+    "stages": [
+      { "position": 1, "id": "PR-C0", "kind": "constitution" },
+      { "position": 2, "id": "SPEC-A", "kind": "checkpoint" },
+      { "position": 3, "id": "PR-A", "kind": "implementation" },
+      { "position": 4, "id": "SPEC-B", "kind": "checkpoint" },
+      { "position": 5, "id": "PR-B", "kind": "implementation" },
+      { "position": 6, "id": "SPEC-C", "kind": "checkpoint" },
+      { "position": 7, "id": "PR-C", "kind": "implementation" },
+      { "position": 8, "id": "SPEC-D", "kind": "checkpoint" },
+      { "position": 9, "id": "PR-D", "kind": "implementation" },
+      { "position": 10, "id": "SPEC-E", "kind": "checkpoint" },
+      { "position": 11, "id": "PR-E", "kind": "implementation" },
+      { "position": 12, "id": "SPEC-F", "kind": "checkpoint" },
+      { "position": 13, "id": "PR-F", "kind": "implementation" },
+      { "position": 14, "id": "SPEC-G", "kind": "checkpoint" },
+      { "position": 15, "id": "PR-G", "kind": "implementation" },
+      { "position": 16, "id": "SPEC-H", "kind": "checkpoint" },
+      { "position": 17, "id": "PR-H", "kind": "implementation" },
+      { "position": 18, "id": "SPEC-I", "kind": "checkpoint" },
+      { "position": 19, "id": "PR-I", "kind": "implementation" }
     ]
   },
+  "budgets": [
+    { "stage": "PR-C0", "rounds": 2, "conditional_extension": false, "max_completed_verdicts": 2 },
+    { "stage": "SPEC-A", "rounds": 1, "conditional_extension": true, "max_completed_verdicts": 2 },
+    { "stage": "PR-A", "rounds": 2, "conditional_extension": false, "max_completed_verdicts": 2 },
+    { "stage": "SPEC-B", "rounds": 2, "conditional_extension": false, "max_completed_verdicts": 2 },
+    { "stage": "PR-B", "rounds": 2, "conditional_extension": false, "max_completed_verdicts": 2 },
+    { "stage": "SPEC-C", "rounds": 1, "conditional_extension": true, "max_completed_verdicts": 2 },
+    { "stage": "PR-C", "rounds": 2, "conditional_extension": false, "max_completed_verdicts": 2 },
+    { "stage": "SPEC-D", "rounds": 2, "conditional_extension": false, "max_completed_verdicts": 2 },
+    { "stage": "PR-D", "rounds": 2, "conditional_extension": false, "max_completed_verdicts": 2 },
+    { "stage": "SPEC-E", "rounds": 1, "conditional_extension": true, "max_completed_verdicts": 2 },
+    { "stage": "PR-E", "rounds": 2, "conditional_extension": false, "max_completed_verdicts": 2 },
+    { "stage": "SPEC-F", "rounds": 2, "conditional_extension": false, "max_completed_verdicts": 2 },
+    { "stage": "PR-F", "rounds": 3, "conditional_extension": false, "max_completed_verdicts": 3 },
+    { "stage": "SPEC-G", "rounds": 1, "conditional_extension": true, "max_completed_verdicts": 2 },
+    { "stage": "PR-G", "rounds": 2, "conditional_extension": false, "max_completed_verdicts": 2 },
+    { "stage": "SPEC-H", "rounds": 1, "conditional_extension": true, "max_completed_verdicts": 2 },
+    { "stage": "PR-H", "rounds": 2, "conditional_extension": false, "max_completed_verdicts": 2 },
+    { "stage": "SPEC-I", "rounds": 1, "conditional_extension": true, "max_completed_verdicts": 2 },
+    { "stage": "PR-I", "rounds": 1, "conditional_extension": true, "max_completed_verdicts": 2 }
+  ],
+  "conditional_extension_rules": [
+    "permitted only where the first round's findings are repairable within the already-approved specification",
+    "the conditional round reviews the exact new review tuple",
+    "the maximum number of completed verdicts is never exceeded and there is no third round",
+    "a specification gap stops immediately and returns to the Founder",
+    "a no-verdict invocation consumes no completed round and is not retried automatically",
+    "a CLEAN or APPROVE verdict at an old tuple never carries to a new one"
+  ],
   "stop_rules": [
     { "id": "SR-1", "trigger": "specification gap", "action": "stop and return to the Founder, whatever budget remains; never patched in-round" },
     { "id": "SR-2", "trigger": "budget exhausted with a blocker or high outstanding", "action": "hard stop, return to the Founder" },
@@ -75,29 +133,67 @@
   "merge_conditions": [
     "zero blocker and zero high, judged as the aggregate of unresolved findings on the tuple",
     "every medium and low carries a named Founder disposition; there is no default",
-    "required checks green at the exact head",
+    "required checks green at the reviewed head",
     "an explicit Founder merge authorisation"
   ],
-  "closure_contract": {
-    "requirements": [
-      "immutable finding identity, never edited",
-      "a named artifact that fails at the pre-fix commit, with command and observed failure",
-      "the same artifact passing at the fix commit, with command and observed result",
-      "a mutation control that removes or inverts the load-bearing mechanism, naming what it removed",
-      "every assertion resolves to an exact file, test or fixture"
-    ],
-    "self_assertion_is_evidence": false,
-    "asserted_not_proven_counts_as": "open",
-    "semantic_gap_decided_by": "Founder",
-    "security_safe_evidence_forms": [
-      "restricted artifact reference",
-      "immutable digest of the restricted artifact",
-      "sanitized reproduction description",
-      "exact test or fixture identity",
-      "auditable before-fails and after-passes results"
-    ],
-    "public_text_rule": "public specification text, pull request bodies and reviewer briefs carry only safe characterisations and never restate a security payload, exploit input or reproduction script"
+  "finding_immutability": {
+    "frozen_fields": ["id", "text", "severity", "review_tuple", "content_digest"],
+    "closure_is_append_only": true,
+    "closure_may_rewrite_finding": false
   },
+  "closure_routes": [
+    {
+      "proof_class": "A",
+      "name": "structural or executable",
+      "requires": [
+        "an artifact that fails at the pre-fix commit, with its exact command and result",
+        "the same artifact passing at the fix commit, with its exact command and result",
+        "a mutation control that removes or inverts the load-bearing mechanism and states which mechanism it removed, where such a mechanism exists"
+      ]
+    },
+    {
+      "proof_class": "B",
+      "name": "change detection",
+      "requires": [
+        "exact base, head, merge-base, tree and diff identity",
+        "comparison against the external review tuple",
+        "no self-approval by the pull request presenting it"
+      ]
+    },
+    {
+      "proof_class": "C",
+      "name": "semantic or specification",
+      "requires": [
+        "the corrected exact new head",
+        "the same immutable finding identifier and content digest",
+        "an independent reviewer verdict at that exact head explicitly confirming the finding is resolved",
+        "a Founder decision or disposition bound to that tuple"
+      ],
+      "executable_oracle_required": false
+    }
+  ],
+  "asserted_not_proven": {
+    "meaning": "a closure missing the evidence its own proof class requires",
+    "counts_as": "open",
+    "never_applies_because": "no program can test a purely semantic claim"
+  },
+  "security_safe_evidence_forms": [
+    "restricted artifact reference",
+    "immutable digest of the restricted artifact",
+    "sanitized reproduction description",
+    "exact test or fixture identity",
+    "auditable before-and-after results"
+  ],
+  "public_text_rule": "public specification text, pull request bodies and reviewer briefs carry only safe characterisations and never restate a security payload, exploit input or reproduction script",
+  "ci_requirements": [
+    "checkout github.event.pull_request.head.sha explicitly",
+    "assert git rev-parse HEAD equals the event head sha",
+    "fetch the declared base and assert the merge-base equals the reviewed base",
+    "record the head tree sha and the diff identity as evidence",
+    "run with minimal read-only permissions and no secrets",
+    "never describe the default synthetic merge checkout as exact-head CI",
+    "never rely on a provider identifier being monotonically ordered"
+  ],
   "reviewer_capacity": {
     "value": 1,
     "scope": "one authority domain: one authoritative database and the host that owns it",
@@ -110,8 +206,8 @@
     {
       "id": "phase0_completion",
       "waivable": false,
-      "evaluates": "whether the constitution, every checkpoint and every implementation slice are complete",
-      "expanded_by": "each slice as it lands"
+      "evaluates": "whether all nineteen stages are complete in order",
+      "false_until_all_stages_complete": true
     },
     {
       "id": "phase1a_entry",
@@ -134,22 +230,23 @@
     "the Founder destructive-operation gate",
     "reviewer independence",
     "global reviewer capacity 1",
-    "the exact-head review requirement",
+    "the exact review tuple requirement",
     "one implementation pull request per lane"
   ],
   "unmarked_is_waivable": false,
   "order": {
-    "per_domain": [
+    "per_stage": [
       "the checkpoint pull request opens",
-      "exact-head review within its budget",
-      "Founder disposition of every finding, then Founder merge authorisation",
-      "the checkpoint pull request is merged and closed",
-      "only then may the implementation pull request for that domain open"
+      "it is reviewed at its exact review tuple within budget",
+      "the Founder dispositions every finding and authorises the merge",
+      "the checkpoint pull request merges and closes",
+      "only then may that stage's implementation pull request open"
     ],
     "overlap_permitted": false,
-    "concurrent_open_targets": 1,
+    "concurrent_open_stages": 1,
     "checkpoint_consumes_implementation_slot": false,
-    "checkpoint_count_is_invariant": false
+    "next_stage_derived_from": "the closed stage registry",
+    "next_stage_self_declared": false
   },
   "superseded_pull_requests": [
     { "number": 1, "head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd", "required_state": "OPEN / UNMERGED / unchanged until this constitution merges" },
@@ -158,19 +255,30 @@
   "superseded_closure_requires_separate_authorisation": true,
   "asset_disposition_classes": ["REUSE_AS_IS", "REWRITE", "DEMOTE", "HISTORICAL_EVIDENCE_ONLY"],
   "asset_disposition_rules": [
-    "reused material is reviewed again in the slice that reintroduces it; a prior review of a different pull request is not a review of this one",
+    "reused material is reviewed again in the stage that reintroduces it; a prior review of a different pull request is not a review of this one",
     "material classified HISTORICAL_EVIDENCE_ONLY is never cited as evidence",
     "effort already spent is not a reason to keep anything"
   ],
   "provider_ordering_assumption": "none; no provider identifier is assumed monotonically ordered, and any ordering model must cite an explicit published contract",
+  "lexical_guard": {
+    "kind": "narrow case-sensitive banned-literal regression guard",
+    "scope": "spec/CONSTITUTION.md only",
+    "proves_absence_of_domain_design": false,
+    "tokens": ["DISPATCHING", "redemption_key", "evidence_snapshot_ref", "worker_dispatch", "CREATE TABLE", "ALTER TABLE", "schema_version", "use_limit"]
+  },
   "decisions": [
-    { "id": "D20", "state": "APPROVED", "subject": "Option A specification ownership and checkpoint topology" },
+    { "id": "D20", "state": "APPROVED", "subject": "Option A specification ownership and the checkpoint topology" },
     { "id": "D26", "state": "APPROVED", "subject": "the three proof classes, the authority root, validator non-goals, and the digest rule" },
     { "id": "D27", "state": "APPROVED", "subject": "the finding closure evidence contract including security-safe forms" },
     { "id": "D28", "state": "APPROVED", "subject": "the order, and the disposition of the two superseded pull requests" },
     { "id": "D29", "state": "APPROVED", "subject": "the surface caps and the review budgets" },
     { "id": "D30", "state": "APPROVED", "subject": "the asset disposition rules" },
-    { "id": "D32", "state": "APPROVED", "subject": "option B: one additional completed verdict round for a single-round target", "option": "B" },
+    { "id": "D32", "state": "APPROVED", "subject": "option B: one conditional completed verdict round for a single-round stage", "option": "B" },
+    { "id": "D33", "state": "APPROVED", "subject": "the externally established reviewed baseline and its explicit not-established state" },
+    { "id": "D34", "state": "APPROVED", "subject": "the closed nineteen-stage Phase 0 registry" },
+    { "id": "D35", "state": "APPROVED", "subject": "closure routes by proof class, and finding immutability" },
+    { "id": "D36", "state": "APPROVED", "subject": "the determinate surface-cap counting rules and the five load-bearing concepts" },
+    { "id": "D37", "state": "APPROVED", "subject": "the exact review tuple and exact-head continuous integration" },
     { "id": "D21", "state": "DEFERRED", "subject": "the authoritative task lifecycle model", "decided_by": "SPEC-B" },
     { "id": "D22", "state": "DEFERRED", "subject": "the task creation transaction", "decided_by": "SPEC-B" },
     { "id": "D23", "state": "DEFERRED", "subject": "the terminal fail-closed rule", "decided_by": "SPEC-B" },
@@ -180,12 +288,5 @@
     { "id": "D12", "state": "DEFERRED", "subject": "a second independent authority domain", "decided_by": "Founder, beyond Phase 0" },
     { "id": "D13", "state": "DEFERRED", "subject": "whether medium and low debt blocks Phase 1A", "decided_by": "Phase 1A entry gate" },
     { "id": "D14", "state": "DEFERRED", "subject": "where the Phase-1A provider lifecycle specification lives", "decided_by": "Phase 1A entry gate" }
-  ],
-  "concepts": [
-    "the authority model",
-    "specification topology and surface caps",
-    "review, closure and budgets",
-    "gates, capacity and order",
-    "the decision ledger"
   ]
 }

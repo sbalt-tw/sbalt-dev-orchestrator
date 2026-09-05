@@ -1,25 +1,45 @@
 name: spec
 
-# There is no `build` step. The repository ships no runtime source at this slice, so
-# `tsc -p tsconfig.build.json` has nothing to compile and fails identically on the base
-# commit. That is recorded as NOT_APPLICABLE / BASE_PARITY_CONFIRMED, never as a pass, and
-# the build config is not relaxed to manufacture a green.
-#
-# The docs-only boundary is conditional. It applies only while the BASE commit does not yet
-# carry the constitution. The marker is read from the base, never from the head, so a pull
-# request cannot declare itself finished in order to escape the boundary.
+# There is no build step: the repository ships no runtime source at this stage, and the
+# same command fails identically on the base commit. That is base parity, never a pass, and
+# the build configuration is not relaxed to manufacture a green.
 
 on:
   push:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  specification:
+  # Exact-head CI. The default pull_request checkout is a synthetic merge commit, which is
+  # not the reviewed head; this job checks out the head SHA explicitly and asserts it.
+  checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert the exact review identity
+        if: github.event_name == 'pull_request'
+        env:
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          actual=$(git rev-parse HEAD)
+          printf 'checked out head : %s\n' "$actual"
+          printf 'event head       : %s\n' "$EVENT_HEAD"
+          [ "$actual" = "$EVENT_HEAD" ] || { echo "::error::checkout is not the reviewed head"; exit 1; }
+          git fetch --no-tags origin "$EVENT_BASE"
+          mb=$(git merge-base "$EVENT_BASE" HEAD)
+          printf 'declared base    : %s\n' "$EVENT_BASE"
+          printf 'merge-base       : %s\n' "$mb"
+          [ "$mb" = "$EVENT_BASE" ] || { echo "::error::merge-base is not the declared base"; exit 1; }
+          printf 'head tree        : %s\n' "$(git rev-parse 'HEAD^{tree}')"
+          printf 'diff identity    : %s\n' "$(git diff --no-color "$EVENT_BASE" HEAD | git hash-object --stdin)"
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: npm }
       - run: npm ci
@@ -29,46 +49,74 @@ jobs:
         run: npm run lint
       - name: Validate the constitution
         run: npm run spec:validate
-      - name: Tests, including the negative fixtures
+      - name: Tests, including the per-predicate negative fixtures
         run: npm test
 
-  boundary:
+  # Surface caps apply to every pull request, for ever. This job never stands down.
+  caps:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - name: A docs-only slice adds no runtime source, schema or migration
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Count against the caps
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          git fetch --no-tags origin "$BASE"
 
+          # NUL-delimited so a path such as "-n" is never read as an option.
+          mapfile -d '' paths < <(git diff --name-only -z --diff-filter=ACDMRT "$BASE" HEAD)
+          files=${#paths[@]}
+          printf 'changed files: %s (cap 8)\n' "$files"
+          printf '  %s\n' "${paths[@]}"
+          [ "$files" -le 8 ] || { echo "::error::file cap exceeded"; exit 1; }
+
+          # A binary change cannot be line counted, so it fails closed.
+          if git diff --numstat "$BASE" HEAD -- . ':(exclude)package-lock.json' | grep -qP '^-\t-\t'; then
+            echo "::error::a binary file changed; line counting is not possible, so this fails closed"; exit 1
+          fi
+
+          total=$(git diff --numstat "$BASE" HEAD -- . ':(exclude)package-lock.json' \
+                  | awk '{a+=$1; d+=$2} END {print a+d+0}')
+          normative=$(git diff --numstat "$BASE" HEAD -- spec/CONSTITUTION.md \
+                  | awk '{a+=$1; d+=$2} END {print a+d+0}')
+          printf 'handwritten normative lines: %s (cap 700)\n' "$normative"
+          printf 'total reviewed diff lines:   %s (cap 1500, lockfile excluded)\n' "$total"
+          [ "$normative" -le 700 ] || { echo "::error::handwritten normative cap exceeded"; exit 1; }
+          [ "$total" -le 1500 ] || { echo "::error::total diff cap exceeded"; exit 1; }
+
+  # Bootstrap-only. The constitution slice ships no runtime; later stages legitimately do.
+  # The marker is read from the BASE commit, so a pull request cannot exempt itself.
+  bootstrap-boundary:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: While the base predates the constitution, this slice stays docs-only
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$BASE"
           if git cat-file -e "$BASE:spec/CONSTITUTION.md" 2>/dev/null; then
-            echo "The base already carries the constitution; the docs-only boundary no longer applies."
+            echo "The base already carries the constitution; the bootstrap boundary does not apply."
+            echo "Surface caps, schema and review rules still apply, in the caps and checks jobs."
             exit 0
           fi
-
-          echo "The base does not yet carry the constitution. Enforcing the docs-only boundary."
-          changed=$(git diff --name-only "$BASE" "$HEAD")
-          echo "$changed"
-
-          runtime=$(echo "$changed" | grep -E '^src/|\.sql$|(^|/)migrations?/' || true)
-          if [ -n "$runtime" ]; then
-            echo "::error::this branch adds runtime source, schema or migration files:"; echo "$runtime"; exit 1
-          fi
-
-          outside=$(echo "$changed" | grep -vE '^(spec/|tools/spec/|tests/spec/|\.github/workflows/|tsconfig\.json$|package\.json$|README\.md$)' || true)
-          if [ -n "$outside" ]; then
-            echo "::error::this branch touches paths outside the specification slice:"; echo "$outside"; exit 1
-          fi
-
-          files=$(echo "$changed" | grep -c . || true)
-          total=$(git diff --numstat "$BASE" "$HEAD" -- . ':(exclude)package-lock.json' | awk '{a+=$1; d+=$2} END {print a+d}')
-          echo "changed files: $files (cap 8)"
-          echo "total reviewed diff, lockfile excluded: $total (cap 1500)"
-          [ "$files" -le 8 ] || { echo "::error::file cap exceeded"; exit 1; }
-          [ "$total" -le 1500 ] || { echo "::error::diff cap exceeded"; exit 1; }
-
-          echo "boundary holds."
+          mapfile -d '' paths < <(git diff --name-only -z "$BASE" HEAD)
+          for p in "${paths[@]}"; do
+            case "$p" in
+              src/*|*.sql|migrations/*|*/migrations/*)
+                echo "::error::bootstrap slice adds runtime, schema or migration: $p"; exit 1 ;;
+              spec/*|tools/spec/*|tests/spec/*|.github/workflows/*|tsconfig.json|package.json|README.md) ;;
+              *) echo "::error::bootstrap slice touches a path outside the specification: $p"; exit 1 ;;
+            esac
+          done
+          echo "bootstrap boundary holds."
