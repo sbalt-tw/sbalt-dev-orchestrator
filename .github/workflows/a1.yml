@@ -1,0 +1,109 @@
+name: ci
+
+# Mechanical checks only. A green run shows what executed; it is not evidence that the
+# architecture or the semantics were approved.
+#
+# The path allow-list and the surface limits below are the limits the A1 brief sets for
+# this pull request. They are not invented here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prove which commit this run executed
+        if: github.event_name == 'pull_request'
+        env:
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          actual=$(git rev-parse HEAD)
+          printf 'checked out head : %s\n' "$actual"
+          printf 'event head       : %s\n' "$EVENT_HEAD"
+          [ "$actual" = "$EVENT_HEAD" ] || { echo "::error::checkout is not the reviewed head"; exit 1; }
+          git fetch --no-tags origin "$EVENT_BASE"
+          mb=$(git merge-base "$EVENT_BASE" HEAD)
+          printf 'declared base    : %s\n' "$EVENT_BASE"
+          printf 'merge-base       : %s\n' "$mb"
+          [ "$mb" = "$EVENT_BASE" ] || { echo "::error::merge-base is not the declared base"; exit 1; }
+          printf 'head tree        : %s\n' "$(git rev-parse 'HEAD^{tree}')"
+
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - name: Clean install
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build
+      - name: Tests
+        run: npm test
+      - name: Compiled CLI smoke, twice against the same database
+        run: |
+          set -euo pipefail
+          db="$RUNNER_TEMP/smoke/orchestrator.sqlite"
+          mkdir -p "$RUNNER_TEMP/smoke"
+          first=$(node dist/cli/index.js db:init --db "$db")
+          second=$(node dist/cli/index.js db:init --db "$db")
+          printf '%s\n%s\n' "$first" "$second"
+          case "$first"  in db:init\ result=applied\ version=1\ checksum=*) ;;    *) exit 1 ;; esac
+          case "$second" in db:init\ result=already_at\ version=1\ checksum=*) ;; *) exit 1 ;; esac
+          if node dist/cli/index.js db:init --db relative.sqlite; then exit 1; fi
+          echo "compiled CLI smoke passed"
+
+  boundary:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Paths and surface limits from the A1 brief
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$BASE"
+
+          # NUL-delimited, so a path such as "-n" is never read as an option.
+          mapfile -d '' paths < <(git diff --name-only -z "$BASE" HEAD)
+          printf 'changed files (%s):\n' "${#paths[@]}"
+          printf '  %s\n' "${paths[@]}"
+          [ "${#paths[@]}" -le 8 ] || { echo "::error::more than 8 changed files"; exit 1; }
+
+          for p in "${paths[@]}"; do
+            case "$p" in
+              src/*|tests/*|package.json|package-lock.json|tsconfig*.json|.github/workflows/*) ;;
+              *) echo "::error::path outside the A1 allow-list: $p"; exit 1 ;;
+            esac
+          done
+
+          lines=$(git diff --numstat "$BASE" HEAD -- . ':(exclude)package-lock.json' \
+                  | awk '{a+=$1; d+=$2} END {print a+d+0}')
+          printf 'non-lockfile diff lines: %s (limit 700)\n' "$lines"
+          [ "$lines" -le 700 ] || { echo "::error::non-lockfile diff exceeds 700 lines"; exit 1; }
+
+          if git grep -nE '\.(skip|todo)\(' -- tests src; then
+            echo "::error::skipped or todo tests are not permitted"; exit 1
+          fi
+          if git grep -nE 'continue-on-error[[:space:]]*:' -- .github; then
+            echo "::error::continue-on-error is not permitted"; exit 1
+          fi
+          echo "boundary holds."
