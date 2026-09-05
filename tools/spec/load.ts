@@ -1,10 +1,14 @@
-// Loads the specification bundle from a repository root. Reads only specification
-// files, configuration text and anything under src/; it never imports runtime code.
+// Loads the specification bundle from a repository root.
+//
+// Loading is fail-closed: a required document or manifest that is missing, empty or
+// malformed becomes a coded problem carried on the bundle, never an empty string and never
+// an uncoded exception. Round-1 MEDIUM 19 was exactly that hole.
 
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { SpecBundle, SourceFile } from './types.js';
+import type { SpecBundle, SourceFile, LoadProblem } from './types.js';
+import { REQUIRED_DOCS, REQUIRED_MANIFESTS } from './anchors.js';
 
 export function repoRoot(): string {
   // tools/spec/load.ts -> tools/spec -> tools -> <root>
@@ -12,11 +16,43 @@ export function repoRoot(): string {
   return join(here, '..', '..');
 }
 
-function readJson<T>(path: string): T {
-  return JSON.parse(readFileSync(path, 'utf8')) as T;
+function readRequiredText(path: string, label: string, problems: LoadProblem[]): string {
+  if (!existsSync(path)) {
+    problems.push({ code: 'DOC_MISSING', detail: `${label} does not exist` });
+    return '';
+  }
+  const text = readFileSync(path, 'utf8');
+  if (text.trim().length === 0) {
+    problems.push({ code: 'DOC_EMPTY', detail: `${label} is empty` });
+  }
+  return text;
 }
 
-function readTextIfPresent(path: string): string {
+function readRequiredJson<T>(path: string, label: string, problems: LoadProblem[]): T | null {
+  if (!existsSync(path)) {
+    problems.push({ code: 'MANIFEST_MISSING', detail: `${label} does not exist` });
+    return null;
+  }
+  const raw = readFileSync(path, 'utf8');
+  if (raw.trim().length === 0) {
+    problems.push({ code: 'MANIFEST_MALFORMED', detail: `${label} is empty` });
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      problems.push({ code: 'MANIFEST_MALFORMED', detail: `${label} is not a JSON object` });
+      return null;
+    }
+    return parsed as T;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    problems.push({ code: 'MANIFEST_MALFORMED', detail: `${label} does not parse: ${message}` });
+    return null;
+  }
+}
+
+function readOptionalText(path: string): string {
   return existsSync(path) ? readFileSync(path, 'utf8') : '';
 }
 
@@ -26,61 +62,58 @@ function walk(dir: string, root: string, out: SourceFile[]): void {
     if (statSync(full).isDirectory()) {
       walk(full, root, out);
     } else {
-      out.push({ path: relative(root, full).split(sep).join('/'), content: readFileSync(full, 'utf8') });
+      out.push({
+        path: relative(root, full).split(sep).join('/'),
+        content: readFileSync(full, 'utf8'),
+      });
     }
   }
 }
 
-const DOC_FILES = [
-  'README.md',
-  '00-model.md',
-  '01-invariants.md',
-  '02-envelope.md',
-  '03-evidence.md',
-  '04-journal.md',
-  '05-leases.md',
-  '06-review.md',
-  '07-identity.md',
-  '08-slices.md',
-  '09-decisions.md',
-  '10-gates.md',
-  '11-pr1-disposition.md',
-  '12-errata.md',
-  '13-test-triage.md',
-  '14-findings.md',
-];
-
 export function loadBundle(root: string = repoRoot()): SpecBundle {
-  const m = (name: string) => join(root, 'spec', 'manifests', name);
+  const problems: LoadProblem[] = [];
+  const manifestPath = (name: string) => join(root, 'spec', 'manifests', name);
 
   const docs: Record<string, string> = {};
-  for (const file of DOC_FILES) {
-    docs[file] = readTextIfPresent(join(root, 'spec', file));
+  for (const file of REQUIRED_DOCS) {
+    docs[file] = readRequiredText(join(root, 'spec', file), `spec/${file}`, problems);
+  }
+
+  const manifests: Record<string, unknown> = {};
+  for (const name of REQUIRED_MANIFESTS) {
+    const value = readRequiredJson<unknown>(manifestPath(name), `spec/manifests/${name}`, problems);
+    if (value !== null) manifests[name] = value;
   }
 
   const runtimeFiles: SourceFile[] = [];
   const srcDir = join(root, 'src');
   if (existsSync(srcDir)) walk(srcDir, root, runtimeFiles);
 
+  const empty = {} as never;
+  const pick = <T>(name: string): T => (manifests[name] as T | undefined) ?? empty;
+
   return {
     root,
-    invariants: readJson(m('invariants.json')),
-    actionMatrix: readJson(m('action-matrix.json')),
-    slices: readJson(m('slices.json')),
-    triage: readJson(m('test-triage.json')),
-    findings: readJson(m('findings.json')),
-    decisions: readJson(m('decisions.json')),
-    gates: readJson(m('gates.json')),
+    loadProblems: problems,
+    invariants: pick('invariants.json'),
+    actionMatrix: pick('action-matrix.json'),
+    slices: pick('slices.json'),
+    triage: pick('test-triage.json'),
+    findings: pick('findings.json'),
+    decisions: pick('decisions.json'),
+    gates: pick('gates.json'),
+    taskState: pick('task-state.json'),
+    evidenceModel: pick('evidence-model.json'),
+    policyParameters: pick('policy-parameters.json'),
+    nonWaivable: pick('non-waivable.json'),
+    pr1Ordering: pick('pr1-ordering.json'),
     docs,
     runtimeFiles,
     configs: {
-      'tsconfig.build.json': readTextIfPresent(join(root, 'tsconfig.build.json')),
-      'package.json': readTextIfPresent(join(root, 'package.json')),
-      'tests/spec/validator-negative.test.ts': readTextIfPresent(
-        join(root, 'tests', 'spec', 'validator-negative.test.ts'),
-      ),
+      'tsconfig.build.json': readOptionalText(join(root, 'tsconfig.build.json')),
+      'package.json': readOptionalText(join(root, 'package.json')),
     },
   };
 }
 
-export { DOC_FILES };
+export { REQUIRED_DOCS, REQUIRED_MANIFESTS };

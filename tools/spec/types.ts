@@ -3,6 +3,11 @@
 
 export type Disposition = 'REQUIRED' | 'FIXED' | 'OPTIONAL' | 'FORBIDDEN';
 
+export interface LoadProblem {
+  code: 'DOC_MISSING' | 'DOC_EMPTY' | 'MANIFEST_MISSING' | 'MANIFEST_MALFORMED';
+  detail: string;
+}
+
 export interface InvariantTest {
   name: string;
   slice: string;
@@ -16,10 +21,11 @@ export interface Invariant {
   statement: string;
   sharpened: boolean;
   errata: string[];
+  decisions: string[];
   owners: {
     normative: string;
     enforcement: string[];
-    persistence: string;
+    persistence: string[];
     persistence_note?: string;
     test: string[];
   };
@@ -82,6 +88,8 @@ export interface TriageRow {
   scenario: string;
   invariants: string[];
   disposition: 'KEEP' | 'REWRITE' | 'DROP';
+  mapping_basis: 'invariant' | 'slice_local';
+  slice_local: { owner_slice: string; named_test: string; why_no_invariant: string } | null;
   rationale: string;
   target_slice: string | null;
   replacement: string | null;
@@ -92,7 +100,10 @@ export interface TriageManifest {
   manifest_version: number;
   source_head: string;
   source_note: string;
-  census: { rows: number; KEEP: number; REWRITE: number; DROP: number };
+  census: {
+    rows: number; KEEP: number; REWRITE: number; DROP: number;
+    mapping_basis?: { invariant: number; slice_local: number };
+  };
   method: Record<string, string>;
   rows: TriageRow[];
 }
@@ -117,6 +128,18 @@ export interface DebtItem {
   owner: string;
   target: string;
   note: string;
+  rule?: string;
+  exit_condition?: string;
+}
+
+export interface Pr0Finding {
+  id: string;
+  severity: string;
+  gap: boolean;
+  title: string;
+  invariants: string[];
+  closed_by: string;
+  closure: string;
 }
 
 export interface FindingManifest {
@@ -133,21 +156,56 @@ export interface FindingManifest {
   }[];
   findings: Finding[];
   carried_debt: DebtItem[];
+  pr0_review: {
+    pr: number;
+    reviewed_base: string;
+    rounds: {
+      round: number;
+      head: string;
+      verdict: Record<string, number>;
+      itemised: number;
+      disposition_authority: string;
+      disposition: string;
+    }[];
+    findings: Pr0Finding[];
+  };
+}
+
+export interface DecisionRow {
+  id: string;
+  decision: string;
+  state: string;
+  amended_by: string[];
+  blocks: string[];
+  note?: string;
+  resolution: {
+    decision_id?: string;
+    outcome?: string;
+    content_ref?: string;
+    content_version?: string;
+  } | null;
 }
 
 export interface DecisionManifest {
   manifest_version: number;
   legal_states: string[];
   amendment_authority: string[];
-  decisions: {
-    id: string;
-    decision: string;
-    state: string;
-    amended_by: string[];
-    blocks: string[];
-    note?: string;
-  }[];
+  resolution_contract: { note: string; required_fields: string[]; outcome_vocabulary: string[] };
+  decisions: DecisionRow[];
   standing_authorizations: { subject: string; state: string; note: string }[];
+}
+
+export interface GateCondition {
+  id: string;
+  text: string;
+  rejects?: string[];
+  requires_decision?: {
+    decision_id: string;
+    outcome: string;
+    requires_content_ref: boolean;
+    requires_content_version: boolean;
+    evaluate_consequence: boolean;
+  } | null;
 }
 
 export interface GateManifest {
@@ -158,9 +216,79 @@ export interface GateManifest {
     title: string;
     evaluates: string;
     excluded_conditions?: string[];
-    conditions: { id: string; text: string }[];
+    conditions: GateCondition[];
     prohibition?: string;
+    waivable: boolean;
   }[];
+}
+
+export interface TaskStateTransition {
+  event: string;
+  from: string;
+  decision: 'ALLOWED' | 'REFUSED';
+  target_rule?: string;
+  note?: string;
+  reason?: string;
+}
+
+export interface TaskStateManifest {
+  manifest_version: number;
+  authority: string;
+  states: string[];
+  terminal_states: string[];
+  initial_state: string;
+  obligations: { WAITING: string[]; BLOCKED: string[] };
+  obligation_model: Record<string, string>;
+  events: { name: string; covers: string }[];
+  caller_contract: { submits: string[]; never_submits: string[]; rule: string };
+  refusals_are_recorded: string;
+  no_wildcards: string;
+  success_preconditions: string[];
+  abandonment_rules: string[];
+  redo_rule: string;
+  census: Record<string, number>;
+  transitions: TaskStateTransition[];
+}
+
+export interface EvidenceModelManifest {
+  manifest_version: number;
+  authority: string;
+  content_fields: { name: string; note: string }[];
+  ordering: { authoritative: string; rule: string; forbidden_tiebreaks: string[] };
+  conflict: Record<string, string>;
+  provider_admission: string;
+  snapshot: string;
+  redemption_triple: string[];
+}
+
+export interface PolicyManifest {
+  manifest_version: number;
+  authority: string[];
+  note: string;
+  parameters: {
+    key: string; type: string; value: number; maximum: number;
+    waivable: boolean; authority: string; note: string;
+  }[];
+  infrastructure_retry: Record<string, string | number>;
+}
+
+export interface NonWaivableManifest {
+  manifest_version: number;
+  authority: string;
+  rule: string;
+  non_waivable: { id: string; subject: string; reference: string }[];
+  waivable_targets: { requirement: string; default: string };
+  amendment: string;
+}
+
+export interface Pr1OrderingManifest {
+  manifest_version: number;
+  authority: string[];
+  pr1: { number: number; branch: string; frozen_head: string; required_state: string };
+  reordering_permitted: boolean;
+  coexistence: string;
+  steps: { step: number; action: string; gate: string }[];
+  prohibited_before_step_5: string[];
 }
 
 export interface SourceFile {
@@ -170,6 +298,7 @@ export interface SourceFile {
 
 export interface SpecBundle {
   root: string;
+  loadProblems: LoadProblem[];
   invariants: InvariantManifest;
   actionMatrix: ActionMatrix;
   slices: SliceManifest;
@@ -177,9 +306,13 @@ export interface SpecBundle {
   findings: FindingManifest;
   decisions: DecisionManifest;
   gates: GateManifest;
+  taskState: TaskStateManifest;
+  evidenceModel: EvidenceModelManifest;
+  policyParameters: PolicyManifest;
+  nonWaivable: NonWaivableManifest;
+  pr1Ordering: Pr1OrderingManifest;
   docs: Record<string, string>;
-  /** Every tracked file under src/, if the directory exists at all. */
+  /** Every file under src/, if the directory exists at all. */
   runtimeFiles: SourceFile[];
-  /** tsconfig.build.json, package.json and the negative-test file, as raw text. */
   configs: Record<string, string>;
 }

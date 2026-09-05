@@ -1,0 +1,57 @@
+{
+ "manifest_version": 1,
+ "authority": [
+  "D11",
+  "spec/11-pr1-disposition.md"
+ ],
+ "pr1": {
+  "number": 1,
+  "branch": "feat/bootstrap-orchestrator",
+  "frozen_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+  "required_state": "OPEN / UNMERGED / UNMODIFIED"
+ },
+ "reordering_permitted": false,
+ "coexistence": "PR-0 may coexist with an open PR #1 because PR-0 is not an implementation PR and does not consume the lane's implementation-PR slot.",
+ "steps": [
+  {
+   "step": 1,
+   "action": "Plan v2.2 delivered",
+   "gate": "done"
+  },
+  {
+   "step": 2,
+   "action": "Founder approves D1-D10 and authorises D11",
+   "gate": "Founder"
+  },
+  {
+   "step": 3,
+   "action": "PR-0 opens",
+   "gate": "on authorisation"
+  },
+  {
+   "step": 4,
+   "action": "PR-0 reviewed at its exact head, findings resolved, merged",
+   "gate": "review + Founder merge"
+  },
+  {
+   "step": 5,
+   "action": "Founder separately authorises closing PR #1",
+   "gate": "Founder"
+  },
+  {
+   "step": 6,
+   "action": "PR #1 closed unmerged with a superseded note; branch and full review history retained",
+   "gate": "on authorisation"
+  },
+  {
+   "step": 7,
+   "action": "Only then may PR-A open",
+   "gate": "on authorisation"
+  }
+ ],
+ "prohibited_before_step_5": [
+  "force-pushing, rebasing, cherry-picking or otherwise rewriting PR #1's commits",
+  "closing, modifying or commenting on PR #1",
+  "moving PR #1's runtime code into PR-0"
+ ]
+}

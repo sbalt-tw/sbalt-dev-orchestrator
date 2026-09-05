@@ -6,14 +6,19 @@
   "rows": 141,
   "KEEP": 106,
   "REWRITE": 30,
-  "DROP": 5
+  "DROP": 5,
+  "mapping_basis": {
+   "invariant": 131,
+   "slice_local": 10
+  }
  },
  "method": {
   "KEEP": "The scenario's meaning is unchanged by the reset and it returns in the target slice under the same name.",
   "REWRITE": "The obligation survives but the model it asserted against does not; it returns in the target slice under the stated replacement name.",
   "DROP": "The scenario tested an artefact of PR #1 that the clean baseline never creates. Permitted only when the named invariants carry the obligation in their own conformance tests.",
   "not_a_reason": "That a previous review did not object to a scenario is never a reason to KEEP it.",
-  "added_tests": "New conformance tests are declared in invariants.json, never inside this manifest; this manifest describes only the 141 historical scenarios."
+  "added_tests": "New conformance tests are declared in invariants.json, never inside this manifest; this manifest describes only the 141 historical scenarios.",
+  "mapping_basis": "Every row declares how it is justified. 'invariant' means the named invariants' statements actually carry the obligation. 'slice_local' means no invariant states it: the row then names the owning slice, the test that will carry it, and why no invariant applies. Forcing a row onto an invariant whose text does not state the obligation is prohibited."
  },
  "rows": [
   {
@@ -29,7 +34,9 @@
    "rationale": "Strict report parsing survives the reset, but the report shape does not: PR-G's message carries an authenticated principal and a replay token that PR #1's report never had.",
    "target_slice": "PR-G",
    "replacement": "conf/A1/PR-G/unknown-report-field-refused",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 2,
@@ -44,7 +51,9 @@
    "rationale": "Same obligation, new required set: the fields a report must carry are redefined by PR-G's ingestion contract.",
    "target_slice": "PR-G",
    "replacement": "conf/A1/PR-G/missing-report-field-refused",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 3,
@@ -60,7 +69,9 @@
    "rationale": "The status vocabulary is re-derived from the PR-B state table rather than from PR #1's report enum.",
    "target_slice": "PR-G",
    "replacement": "conf/A1/PR-G/unknown-report-status-refused",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 4,
@@ -75,7 +86,9 @@
    "rationale": "Task identity becomes task:<uuid-v4> under the canonical identity rules, so the unknown-task case is re-expressed against that form.",
    "target_slice": "PR-G",
    "replacement": "conf/A1/PR-G/report-for-unknown-task-refused",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 5,
@@ -91,7 +104,9 @@
    "rationale": "Lease possession now distinguishes a reconciliation claim from an execution claim, so 'does not hold the lease' has two distinct failing shapes instead of one.",
    "target_slice": "PR-G",
    "replacement": "conf/L5/PR-G/report-without-an-execution-claim-refused",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 6,
@@ -106,7 +121,9 @@
    "rationale": "A rejected report must stay auditable; the meaning is unchanged and INV-S6 carries it forward verbatim.",
    "target_slice": "PR-G",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 7,
@@ -121,7 +138,9 @@
    "rationale": "Coordinator proposals become ingested messages under PR-G's contract, so the unknown-action case moves with them.",
    "target_slice": "PR-G",
    "replacement": "conf/A1/PR-G/unknown-coordinator-action-refused",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 8,
@@ -136,7 +155,9 @@
    "rationale": "Unexpected-key rejection is retained but re-expressed against the versioned canonical serialization rather than an ad-hoc schema.",
    "target_slice": "PR-G",
    "replacement": "conf/A1/PR-G/coordinator-output-extra-keys-refused",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 9,
@@ -152,7 +173,9 @@
    "rationale": "The premise changed: merge readiness is no longer 'a clean verdict exists at the current head' but 'no unresolved blocking finding on the tuple', with base compared as well as head.",
    "target_slice": "PR-F",
    "replacement": "conf/E3/PR-F/merge-readiness-is-an-aggregate",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 10,
@@ -167,7 +190,9 @@
    "rationale": "CI status becomes an immutable observation recomputed into a current snapshot, so the assertion moves from a stored flag to a recomputed slot.",
    "target_slice": "PR-D",
    "replacement": "conf/E2/PR-D/review-requested-only-after-a-passing-observation",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 11,
@@ -182,7 +207,9 @@
    "rationale": "The dependency graph moves to PR-H and a caller's claim is checked against persisted edges rather than against an in-memory graph object.",
    "target_slice": "PR-H",
    "replacement": "conf/S3/PR-H/dependency-claim-checked-against-the-graph",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 12,
@@ -197,7 +224,9 @@
    "rationale": "The stub coordinator end-to-end walk is rebuilt on the new slices; only its recording obligation is unchanged.",
    "target_slice": "PR-I",
    "replacement": "conf/S6/PR-I/coordinator-run-is-recorded",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 13,
@@ -213,7 +242,9 @@
    "rationale": "The advisory principle survives but the gate it must not bypass is now an APPROVED envelope, not a resolved row.",
    "target_slice": "PR-F",
    "replacement": "conf/A2/PR-F/coordinator-proposal-does-not-authorise",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 14,
@@ -221,14 +252,18 @@
    "source_file": "tests/demo.test.ts",
    "source_line": 7,
    "scenario": "phase-0 demo scenario > walks the whole workflow on synthetic data",
-   "invariants": [
-    "INV-L1"
-   ],
+   "invariants": [],
    "disposition": "REWRITE",
    "rationale": "The demo is rebuilt over PR-A to PR-H; the scenario's value is that the whole workflow runs on durable state, which is retained.",
    "target_slice": "PR-I",
    "replacement": "conf/L1/PR-I/demo-walks-the-workflow",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "slice_local",
+   "slice_local": {
+    "owner_slice": "PR-I",
+    "named_test": "demo/PR-I/whole-workflow-walks-on-durable-state",
+    "why_no_invariant": "No invariant states that a demo scenario must exist. It is slice-local integration coverage for PR-I."
+   }
   },
   {
    "row": 15,
@@ -236,14 +271,18 @@
    "source_file": "tests/demo.test.ts",
    "source_line": 29,
    "scenario": "project adapter boundary > describes SBALT without needing or touching a checkout",
-   "invariants": [
-    "INV-L1"
-   ],
+   "invariants": [],
    "disposition": "KEEP",
    "rationale": "The read-only project adapter contributes no authority and needs no checkout; the property is unchanged by the reset.",
    "target_slice": "PR-I",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "slice_local",
+   "slice_local": {
+    "owner_slice": "PR-I",
+    "named_test": "adapter/PR-I/describes-a-project-without-a-checkout",
+    "why_no_invariant": "No invariant states that the project adapter must work without a checkout. It is a PR-I design constraint, not a system invariant."
+   }
   },
   {
    "row": 16,
@@ -251,14 +290,18 @@
    "source_file": "tests/demo.test.ts",
    "source_line": 43,
    "scenario": "project adapter boundary > reads a repo path from the environment rather than a committed absolute path",
-   "invariants": [
-    "INV-L1"
-   ],
+   "invariants": [],
    "disposition": "KEEP",
    "rationale": "Reading the repository path from the environment rather than a committed absolute path is unchanged and still required.",
    "target_slice": "PR-I",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "slice_local",
+   "slice_local": {
+    "owner_slice": "PR-I",
+    "named_test": "adapter/PR-I/repository-path-comes-from-the-environment",
+    "why_no_invariant": "No invariant states where a repository path is configured. It is a PR-I portability constraint."
+   }
   },
   {
    "row": 17,
@@ -266,14 +309,18 @@
    "source_file": "tests/demo.test.ts",
    "source_line": 48,
    "scenario": "project adapter boundary > classifies a risky change higher than a docs change",
-   "invariants": [
-    "INV-R1"
-   ],
+   "invariants": [],
    "disposition": "REWRITE",
    "rationale": "Risk labels are now a separate axis from finding severity, so the comparison is re-expressed in risk-label terms and must not borrow severity words.",
    "target_slice": "PR-I",
    "replacement": "conf/R1/PR-I/risk-label-is-not-a-severity",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "slice_local",
+   "slice_local": {
+    "owner_slice": "PR-I",
+    "named_test": "adapter/PR-I/risk-label-ordering",
+    "why_no_invariant": "Risk labels are a separate axis from severity and no invariant states how a change is classified. PR-I owns the classification."
+   }
   },
   {
    "row": 18,
@@ -289,7 +336,9 @@
    "rationale": "Defaulting every gate closed is the direct expression of INV-A1 and is unchanged.",
    "target_slice": "PR-A",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 19,
@@ -304,7 +353,9 @@
    "rationale": "Rejecting an unknown policy key rather than ignoring it is unchanged.",
    "target_slice": "PR-A",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 20,
@@ -319,7 +370,9 @@
    "rationale": "Self-hosting stays unparseable in Phase 0; the scenario is unchanged.",
    "target_slice": "PR-A",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 21,
@@ -328,14 +381,16 @@
    "source_line": 8,
    "scenario": "dependency graph > holds B while A is unfinished, then releases it when A is DONE",
    "invariants": [
-    "INV-L1",
-    "INV-R3"
+    "INV-S2",
+    "INV-S3"
    ],
    "disposition": "KEEP",
-   "rationale": "Holding a dependent task until its predecessor is DONE is unchanged.",
+   "rationale": "Holding a dependent task until its predecessor is DONE is the DEPENDENCIES_SATISFIED transition of the D15 table; the meaning is unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 22,
@@ -344,13 +399,15 @@
    "source_line": 45,
    "scenario": "dependency graph > lets an unrelated lane keep moving while a dependency waits",
    "invariants": [
-    "INV-R3"
+    "INV-S2"
    ],
    "disposition": "KEEP",
-   "rationale": "Lane independence under a waiting dependency is unchanged.",
+   "rationale": "Lane independence under a waiting dependency is unchanged; it is the same transition applied per lane.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 23,
@@ -358,14 +415,18 @@
    "source_file": "tests/dependencies.test.ts",
    "source_line": 68,
    "scenario": "dependency graph > rejects a self dependency",
-   "invariants": [
-    "INV-A1"
-   ],
+   "invariants": [],
    "disposition": "KEEP",
    "rationale": "A self dependency is an unreadable graph and must fail closed; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "slice_local",
+   "slice_local": {
+    "owner_slice": "PR-H",
+    "named_test": "graph/PR-H/self-dependency-refused",
+    "why_no_invariant": "No invariant states that the dependency graph must be acyclic. It is PR-H's scheduler correctness, and mapping it to INV-A1 would have been a mapping the invariant text does not support."
+   }
   },
   {
    "row": 24,
@@ -373,14 +434,18 @@
    "source_file": "tests/dependencies.test.ts",
    "source_line": 75,
    "scenario": "dependency graph > rejects a direct cycle",
-   "invariants": [
-    "INV-A1"
-   ],
+   "invariants": [],
    "disposition": "KEEP",
    "rationale": "Direct cycle rejection is unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "slice_local",
+   "slice_local": {
+    "owner_slice": "PR-H",
+    "named_test": "graph/PR-H/direct-cycle-refused",
+    "why_no_invariant": "As row 23: graph acyclicity is slice-local to PR-H, not an invariant."
+   }
   },
   {
    "row": 25,
@@ -388,14 +453,18 @@
    "source_file": "tests/dependencies.test.ts",
    "source_line": 85,
    "scenario": "dependency graph > rejects a transitive cycle",
-   "invariants": [
-    "INV-A1"
-   ],
+   "invariants": [],
    "disposition": "KEEP",
    "rationale": "Transitive cycle rejection is unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "slice_local",
+   "slice_local": {
+    "owner_slice": "PR-H",
+    "named_test": "graph/PR-H/transitive-cycle-refused",
+    "why_no_invariant": "As row 23: graph acyclicity is slice-local to PR-H, not an invariant."
+   }
   },
   {
    "row": 26,
@@ -410,7 +479,9 @@
    "rationale": "A required state other than DONE is drawn from the closed vocabulary; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 27,
@@ -426,7 +497,9 @@
    "rationale": "'Resolved decision' is replaced by 'APPROVED outcome on a redeemable envelope', so the precondition under test is different even though the refusal is the same.",
    "target_slice": "PR-F",
    "replacement": "conf/A2/PR-F/production-write-needs-an-approved-envelope",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 28,
@@ -441,7 +514,9 @@
    "rationale": "The positive case likewise moves from a resolved row to a redeemed envelope with a consumed use ordinal.",
    "target_slice": "PR-F",
    "replacement": "conf/A2/PR-F/approved-envelope-releases-the-work",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 29,
@@ -456,7 +531,9 @@
    "rationale": "One task's answer must not unblock another; unchanged and still owned by INV-A7.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 30,
@@ -471,7 +548,9 @@
    "rationale": "Category isolation is unchanged: an authorization binds its own action kind.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 31,
@@ -487,7 +566,9 @@
    "rationale": "Prose in a report cannot substitute for authority; unchanged and reinforced by FE-1.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 32,
@@ -503,7 +584,9 @@
    "rationale": "Single use becomes ordinal consumption: 'resolve twice' is re-expressed as a second redemption attempt against an exhausted use count.",
    "target_slice": "PR-F",
    "replacement": "conf/A5/PR-F/exhausted-uses-cannot-redeem-again",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 33,
@@ -518,7 +601,9 @@
    "rationale": "A completion report that owes a PR must not finish the task; unchanged.",
    "target_slice": "PR-G",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 34,
@@ -533,7 +618,9 @@
    "rationale": "A blocked report that names no blocker is unreadable and must fail closed; unchanged.",
    "target_slice": "PR-G",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 35,
@@ -549,7 +636,9 @@
    "rationale": "Refusing rather than inventing a failure classification is unchanged.",
    "target_slice": "PR-G",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 36,
@@ -564,7 +653,9 @@
    "rationale": "Only the holder is released; unchanged.",
    "target_slice": "PR-C",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 37,
@@ -579,7 +670,9 @@
    "rationale": "A task-kind failure is rework, not an infrastructure block; unchanged.",
    "target_slice": "PR-D",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 38,
@@ -594,7 +687,9 @@
    "rationale": "A flagged architecture change cannot complete without a decision; unchanged.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 39,
@@ -609,7 +704,9 @@
    "rationale": "Application-boundary state validation is unchanged.",
    "target_slice": "PR-B",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 40,
@@ -624,7 +721,9 @@
    "rationale": "Database-boundary state validation is unchanged.",
    "target_slice": "PR-A",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 41,
@@ -639,7 +738,9 @@
    "rationale": "An unknown initial state is refused; unchanged.",
    "target_slice": "PR-A",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 42,
@@ -654,7 +755,9 @@
    "rationale": "A policy that opens the merge gate is refused; unchanged.",
    "target_slice": "PR-A",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 43,
@@ -669,7 +772,9 @@
    "rationale": "A policy that opens the remote-write gates is refused; unchanged.",
    "target_slice": "PR-A",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 44,
@@ -684,7 +789,9 @@
    "rationale": "A policy that turns off the destructive-operation gate is refused; unchanged.",
    "target_slice": "PR-A",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 45,
@@ -700,7 +807,9 @@
    "rationale": "A gated resource naming no authorising category gates nothing and is refused; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 46,
@@ -715,7 +824,9 @@
    "rationale": "Production write is gated by name whatever the configuration says; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 47,
@@ -724,13 +835,15 @@
    "source_line": 252,
    "scenario": "dependencies are re-checked at dispatch > holds a READY task whose dependency appeared after it became ready",
    "invariants": [
-    "INV-L1"
+    "INV-S3"
    ],
    "disposition": "KEEP",
-   "rationale": "A dependency added after a task became ready still holds it; unchanged.",
+   "rationale": "A dependency appearing after a task became ready is re-read at dispatch and the target is resolved from the graph, not from the caller.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 48,
@@ -745,7 +858,9 @@
    "rationale": "A task running with no live lease becomes visibly blocked; unchanged.",
    "target_slice": "PR-C",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 49,
@@ -760,7 +875,9 @@
    "rationale": "A scarce slot held by a stopped task is returned; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 50,
@@ -776,7 +893,9 @@
    "rationale": "Recovery returns to the interrupted state rather than a caller-chosen one; unchanged.",
    "target_slice": "PR-B",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 51,
@@ -792,7 +911,9 @@
    "rationale": "Escalation now opens a wait and issues a decision request bound to that wait, so what the Founder resolves is a different object.",
    "target_slice": "PR-F",
    "replacement": "conf/A1/PR-F/budget-escalation-opens-a-resolvable-wait",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 52,
@@ -808,7 +929,9 @@
    "rationale": "A failed dispatch strands nothing; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 53,
@@ -823,7 +946,9 @@
    "rationale": "State stays consistent across a restart mid-dispatch; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 54,
@@ -838,7 +963,9 @@
    "rationale": "An injected policy is re-parsed so a gate cannot arrive already open; unchanged.",
    "target_slice": "PR-A",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 55,
@@ -853,7 +980,9 @@
    "rationale": "A task interrupted while waiting for CI is recoverable; unchanged.",
    "target_slice": "PR-B",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 56,
@@ -868,7 +997,9 @@
    "rationale": "A task stays parked while any decision is outstanding; unchanged.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 57,
@@ -883,7 +1014,9 @@
    "rationale": "Exactly-once resolution is retained but now covers the whole issuance transaction — decision row, wait identity and envelope commit together — so the assertion is wider than the original.",
    "target_slice": "PR-F",
    "replacement": "conf/X4/PR-F/issuance-commits-once-and-atomically",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 58,
@@ -898,7 +1031,9 @@
    "rationale": "A resource whose gate flag and category disagree is refused at the database; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 59,
@@ -913,7 +1048,9 @@
    "rationale": "A dependency on a non-existent state is refused; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 60,
@@ -929,7 +1066,9 @@
    "rationale": "This is the scenario whose fresh-database-only shape hid the round-3 blocker. It returns paired with a populated fixture so that a migration passing on an empty database cannot pass the suite.",
    "target_slice": "PR-A",
    "replacement": "conf/M2/PR-A/fresh-and-populated-both-upgrade",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 61,
@@ -944,7 +1083,9 @@
    "rationale": "One implementation PR per lane; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 62,
@@ -959,7 +1100,9 @@
    "rationale": "The reason a task was held is recorded; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 63,
@@ -974,7 +1117,9 @@
    "rationale": "A higher limit permits two concurrent PRs; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 64,
@@ -989,7 +1134,9 @@
    "rationale": "Round 5 showed the counting rule was wrong: the limit counts every non-terminal task whose PR is open, so the exemption must be re-derived from 'has no open PR' rather than from the task being a docs task.",
    "target_slice": "PR-H",
    "replacement": "conf/R3/PR-H/a-task-with-no-open-pr-does-not-count",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 65,
@@ -997,14 +1144,18 @@
    "source_file": "tests/lanePolicy.test.ts",
    "source_line": 89,
    "scenario": "lane active-PR policy > skips a paused lane",
-   "invariants": [
-    "INV-R3"
-   ],
+   "invariants": [],
    "disposition": "KEEP",
    "rationale": "A paused lane is skipped; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "slice_local",
+   "slice_local": {
+    "owner_slice": "PR-H",
+    "named_test": "lane/PR-H/paused-lane-is-skipped",
+    "why_no_invariant": "No invariant states that a lane may be paused. It is a PR-H scheduling feature."
+   }
   },
   {
    "row": 66,
@@ -1020,7 +1171,9 @@
    "rationale": "Process death mid-task loses no work; unchanged.",
    "target_slice": "PR-C",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 67,
@@ -1035,7 +1188,9 @@
    "rationale": "A stale lease reconciles to blocked, never to success; unchanged.",
    "target_slice": "PR-C",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 68,
@@ -1050,7 +1205,9 @@
    "rationale": "No silent re-dispatch after recovery; unchanged.",
    "target_slice": "PR-C",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 69,
@@ -1065,7 +1222,9 @@
    "rationale": "At most one active lease per task under repeated ticks; unchanged.",
    "target_slice": "PR-C",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 70,
@@ -1080,7 +1239,9 @@
    "rationale": "Lanes, tasks and decisions persist across a restart; unchanged.",
    "target_slice": "PR-A",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 71,
@@ -1096,7 +1257,9 @@
    "rationale": "FE-6 redefines the property: capacity 1 means one in-flight invocation, not one active row, so the scenario moves to PR-C and gains a draining case its original could not express.",
    "target_slice": "PR-C",
    "replacement": "conf/P1/PR-C/one-in-flight-reviewer-invocation",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 72,
@@ -1111,7 +1274,9 @@
    "rationale": "A configurable capacity above one is honoured; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 73,
@@ -1126,7 +1291,9 @@
    "rationale": "A resource is released when its holder reports back; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 74,
@@ -1141,7 +1308,9 @@
    "rationale": "An unknown resource is refused rather than given invented capacity; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 75,
@@ -1156,7 +1325,9 @@
    "rationale": "A partial acquisition rolls back; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 76,
@@ -1171,7 +1342,9 @@
    "rationale": "'0 blocker / 0 high' is redefined as the aggregate over unresolved findings on the tuple, so the stopping condition under test is a different computation.",
    "target_slice": "PR-D",
    "replacement": "conf/E3/PR-D/stop-on-a-clean-aggregate",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 77,
@@ -1186,7 +1359,9 @@
    "rationale": "A high sends the task back for a fix; unchanged.",
    "target_slice": "PR-D",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 78,
@@ -1201,7 +1376,9 @@
    "rationale": "A blocker sends the task back for a fix; unchanged.",
    "target_slice": "PR-D",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 79,
@@ -1216,7 +1393,9 @@
    "rationale": "Budget exhaustion with findings open escalates rather than proceeding; unchanged.",
    "target_slice": "PR-D",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 80,
@@ -1231,7 +1410,9 @@
    "rationale": "An infrastructure abort consumes no verdict round; unchanged.",
    "target_slice": "PR-D",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 81,
@@ -1246,7 +1427,9 @@
    "rationale": "The infra-abort rule stays non-configurable; unchanged.",
    "target_slice": "PR-D",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 82,
@@ -1261,7 +1444,9 @@
    "rationale": "Round 5 showed head-only comparison is insufficient: the scenario returns comparing repository, base and head, which its original could not detect.",
    "target_slice": "PR-D",
    "replacement": "conf/E7/PR-D/stale-review-detected-by-base-and-head",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 83,
@@ -1277,7 +1462,9 @@
    "rationale": "An attempt that produced no verdict cannot drive a verdict transition; unchanged.",
    "target_slice": "PR-D",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 84,
@@ -1292,7 +1479,9 @@
    "rationale": "The caller must state what was decided; unchanged and now also required at the envelope level.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 85,
@@ -1307,7 +1496,9 @@
    "rationale": "A decision cannot be resolved without an outcome; unchanged.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 86,
@@ -1323,7 +1514,9 @@
    "rationale": "The database refuses a resolved row with a null outcome; unchanged, and the IS NOT NULL formulation is carried into the v1 baseline.",
    "target_slice": "PR-A",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 87,
@@ -1338,7 +1531,9 @@
    "rationale": "The scenario upgrades from PR #1's version 2, a schema shape that does not exist in the clean v1 baseline and never will. The obligation it protected — a row that never recorded a decision must not become consent — is INV-R2, which carries its own PR-A negative test, so dropping this row leaves no invariant uncovered.",
    "target_slice": null,
    "replacement": null,
-   "audit_note": "Removed with no replacement; the obligation is covered by the named invariants' own conformance tests."
+   "audit_note": "Removed with no replacement; the obligation is covered by the named invariants' own conformance tests.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 88,
@@ -1354,7 +1549,9 @@
    "rationale": "There are no legacy rows to withdraw, but the underlying rule is general and survives: a decision carrying no APPROVED outcome authorises nothing, whatever produced it.",
    "target_slice": "PR-F",
    "replacement": "conf/A2/PR-F/a-decision-without-an-approval-authorises-nothing",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 89,
@@ -1369,7 +1566,9 @@
    "rationale": "The scenario repairs a mislabelling performed by PR #1's migration 2, which the clean baseline never performs. INV-R2's negative test already forbids inventing a category for a row that never recorded one, so no coverage is lost.",
    "target_slice": null,
    "replacement": null,
-   "audit_note": "Removed with no replacement; the obligation is covered by the named invariants' own conformance tests."
+   "audit_note": "Removed with no replacement; the obligation is covered by the named invariants' own conformance tests.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 90,
@@ -1385,7 +1584,9 @@
    "rationale": "A late blocking verdict takes back merge readiness; unchanged and now reinforced by the no-latest-verdict-wins rule.",
    "target_slice": "PR-D",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 91,
@@ -1400,7 +1601,9 @@
    "rationale": "A refused component rolls the whole report back; unchanged.",
    "target_slice": "PR-G",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 92,
@@ -1415,7 +1618,9 @@
    "rationale": "An answer given during an outage is carried through recovery; unchanged.",
    "target_slice": "PR-B",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 93,
@@ -1431,7 +1636,9 @@
    "rationale": "A refusal answered during an outage is honoured; unchanged.",
    "target_slice": "PR-B",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 94,
@@ -1446,7 +1653,9 @@
    "rationale": "A later approval in a new wait reaches its own destination; unchanged.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 95,
@@ -1461,7 +1670,9 @@
    "rationale": "A past budget extension does not route every future approval; unchanged.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 96,
@@ -1476,7 +1687,9 @@
    "rationale": "A fresh request is how an earlier refusal is revisited; unchanged.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 97,
@@ -1491,7 +1704,9 @@
    "rationale": "Denial wins within one wait whatever the order; unchanged.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 98,
@@ -1506,7 +1721,9 @@
    "rationale": "A resolved decision with no recorded outcome cannot continue the task; unchanged.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 99,
@@ -1521,7 +1738,9 @@
    "rationale": "legacy_unknown does not exist in the clean baseline, and round 5 showed protecting only that one category was the defect. The scenario returns generalised: no policy sync may ungate any gated resource.",
    "target_slice": "PR-H",
    "replacement": "conf/R1/PR-H/policy-sync-cannot-ungate-any-resource",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 100,
@@ -1536,7 +1755,9 @@
    "rationale": "An expired lease is not authority for an outcome report; unchanged.",
    "target_slice": "PR-G",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 101,
@@ -1551,7 +1772,9 @@
    "rationale": "A lease within its term still authorises; unchanged.",
    "target_slice": "PR-G",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 102,
@@ -1566,7 +1789,9 @@
    "rationale": "An event not permitted from the current state is rejected; unchanged.",
    "target_slice": "PR-B",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 103,
@@ -1582,7 +1807,9 @@
    "rationale": "A valid transition persists and records history; unchanged.",
    "target_slice": "PR-B",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 104,
@@ -1597,7 +1824,9 @@
    "rationale": "A rejection is recorded so blocked work is explainable; unchanged.",
    "target_slice": "PR-B",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 105,
@@ -1612,7 +1841,9 @@
    "rationale": "A terminal task cannot be moved; unchanged.",
    "target_slice": "PR-B",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 106,
@@ -1627,7 +1858,9 @@
    "rationale": "A multi-target event resolves from the decision; unchanged.",
    "target_slice": "PR-B",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 107,
@@ -1642,7 +1875,9 @@
    "rationale": "A caller target contradicting the decision is rejected; unchanged.",
    "target_slice": "PR-B",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 108,
@@ -1657,7 +1892,9 @@
    "rationale": "A completion cannot finish a task that owes a PR; unchanged.",
    "target_slice": "PR-B",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 109,
@@ -1672,7 +1909,9 @@
    "rationale": "Assignment without an active lease is rejected; unchanged.",
    "target_slice": "PR-C",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 110,
@@ -1684,10 +1923,12 @@
     "INV-S3"
    ],
    "disposition": "KEEP",
-   "rationale": "A dependencies-satisfied claim contradicting the graph is rejected; unchanged.",
+   "rationale": "A dependencies-satisfied claim contradicting the graph is an assertion refused by INV-S3; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 111,
@@ -1702,7 +1943,9 @@
    "rationale": "The obligation is unchanged but its fixture is not: the populated fixture is now the clean v1 baseline rather than PR #1's version 1.",
    "target_slice": "PR-A",
    "replacement": "conf/M3/PR-A/populated-v1-upgrades-losslessly",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 112,
@@ -1717,7 +1960,9 @@
    "rationale": "Reopening after an upgrade must still work, against the new chain v1 to v7 rather than PR #1's three versions.",
    "target_slice": "PR-A",
    "replacement": "conf/M4/PR-A/reopen-after-upgrade",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 113,
@@ -1732,7 +1977,9 @@
    "rationale": "A failed migration leaves the database untouched; unchanged and directly re-usable.",
    "target_slice": "PR-A",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 114,
@@ -1748,7 +1995,9 @@
    "rationale": "There is no old schema to describe, so the scenario returns in its general form: an unrecognised shape aborts rather than being guessed at, and provenance is never invented.",
    "target_slice": "PR-A",
    "replacement": "conf/M5/PR-A/unrecognised-shape-aborts",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 115,
@@ -1763,7 +2012,9 @@
    "rationale": "legacy_unknown is an artefact of PR #1's migration and does not exist in the clean baseline. The general rule — an approval in one category never authorises another — is INV-A3, tested at PR-F, so nothing is left uncovered.",
    "target_slice": null,
    "replacement": null,
-   "audit_note": "Removed with no replacement; the obligation is covered by the named invariants' own conformance tests."
+   "audit_note": "Removed with no replacement; the obligation is covered by the named invariants' own conformance tests.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 116,
@@ -1778,7 +2029,9 @@
    "rationale": "There are no legacy resolutions in a clean v1 baseline to migrate to WITHDRAWN. INV-R2's negative test forbids inventing consent from a row that never recorded it.",
    "target_slice": null,
    "replacement": null,
-   "audit_note": "Removed with no replacement; the obligation is covered by the named invariants' own conformance tests."
+   "audit_note": "Removed with no replacement; the obligation is covered by the named invariants' own conformance tests.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 117,
@@ -1793,7 +2046,9 @@
    "rationale": "With no legacy rows, this collapses into the general rule that a decision without an APPROVED outcome authorises nothing, which row 88 carries forward as a rewritten scenario. Keeping both would assert the same obligation twice under a name that no longer describes anything.",
    "target_slice": null,
    "replacement": null,
-   "audit_note": "Removed with no replacement; the obligation is covered by the named invariants' own conformance tests."
+   "audit_note": "Removed with no replacement; the obligation is covered by the named invariants' own conformance tests.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 118,
@@ -1808,7 +2063,9 @@
    "rationale": "A task interrupted at the gate returns to the gate; unchanged.",
    "target_slice": "PR-B",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 119,
@@ -1823,7 +2080,9 @@
    "rationale": "A task owing a decision is never dispatched, whatever its state; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 120,
@@ -1838,7 +2097,9 @@
    "rationale": "Recovery proceeds normally when nothing is outstanding; unchanged.",
    "target_slice": "PR-B",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 121,
@@ -1853,7 +2114,9 @@
    "rationale": "A later approval does not override an earlier denial; unchanged.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 122,
@@ -1868,7 +2131,9 @@
    "rationale": "A cancelled decision is not an approval; unchanged.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 123,
@@ -1883,7 +2148,9 @@
    "rationale": "Only an approval opens a gate; unchanged.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 124,
@@ -1898,7 +2165,9 @@
    "rationale": "The task stays gated while any decision is unanswered; unchanged.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 125,
@@ -1913,7 +2182,9 @@
    "rationale": "Another task's decision does not open this task's gate; unchanged.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 126,
@@ -1928,7 +2199,9 @@
    "rationale": "An approval in one category does not open another; unchanged.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 127,
@@ -1943,7 +2216,9 @@
    "rationale": "Approval and denial in one category fail closed; unchanged.",
    "target_slice": "PR-F",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 128,
@@ -1958,7 +2233,9 @@
    "rationale": "The policy the orchestrator uses is deeply frozen; unchanged.",
    "target_slice": "PR-A",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 129,
@@ -1973,7 +2250,9 @@
    "rationale": "A runtime attempt to open the merge gate is refused; unchanged.",
    "target_slice": "PR-A",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 130,
@@ -1988,7 +2267,9 @@
    "rationale": "A runtime attempt to widen a budget or a remote-write gate is refused; unchanged.",
    "target_slice": "PR-A",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 131,
@@ -2003,7 +2284,9 @@
    "rationale": "Both policy constructors hand out frozen objects; unchanged.",
    "target_slice": "PR-A",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 132,
@@ -2018,7 +2301,9 @@
    "rationale": "An unregistered worker cannot complete a running task; unchanged.",
    "target_slice": "PR-G",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 133,
@@ -2033,7 +2318,9 @@
    "rationale": "A registered worker without the lease cannot complete a task; unchanged.",
    "target_slice": "PR-G",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 134,
@@ -2048,7 +2335,9 @@
    "rationale": "A rejected report leaves exactly one audit row; unchanged.",
    "target_slice": "PR-G",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 135,
@@ -2064,7 +2353,9 @@
    "rationale": "This scenario encodes DEBT-2, the deliberate Phase-0 simplification that a review report needs registration but not a claim. PR-G decides that question; the scenario returns asserting whatever PR-G decides, not the simplification.",
    "target_slice": "PR-G",
    "replacement": "conf/L3/PR-G/review-report-authorisation-as-decided-by-pr-g",
-   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model."
+   "audit_note": "Returns under a new name because the obligation is re-expressed against the reset model.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 136,
@@ -2079,7 +2370,9 @@
    "rationale": "One dispatch per tick at capacity one; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 137,
@@ -2094,7 +2387,9 @@
    "rationale": "Three dispatches when workers and tasks allow; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 138,
@@ -2109,7 +2404,9 @@
    "rationale": "Raising the pool raises throughput: worker count is never hardcoded; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 139,
@@ -2124,7 +2421,9 @@
    "rationale": "An idle worker can be removed without disturbing tasks; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "invariant",
+   "slice_local": null
   },
   {
    "row": 140,
@@ -2132,14 +2431,18 @@
    "source_file": "tests/workers.test.ts",
    "source_line": 73,
    "scenario": "dynamic worker pool > will not dispatch to a worker lacking the required capability",
-   "invariants": [
-    "INV-L2"
-   ],
+   "invariants": [],
    "disposition": "KEEP",
    "rationale": "A worker lacking the required capability is not dispatched to; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "slice_local",
+   "slice_local": {
+    "owner_slice": "PR-H",
+    "named_test": "workers/PR-H/capability-matching",
+    "why_no_invariant": "INV-L2 says workers hold no state; it does not require capability matching. That is PR-H's dispatch rule."
+   }
   },
   {
    "row": 141,
@@ -2147,14 +2450,18 @@
    "source_file": "tests/workers.test.ts",
    "source_line": 92,
    "scenario": "dynamic worker pool > orders candidates by priority then age",
-   "invariants": [
-    "INV-R3"
-   ],
+   "invariants": [],
    "disposition": "KEEP",
    "rationale": "Candidates are ordered by priority then age; unchanged.",
    "target_slice": "PR-H",
    "replacement": null,
-   "audit_note": "Carried forward under the same scenario name."
+   "audit_note": "Carried forward under the same scenario name.",
+   "mapping_basis": "slice_local",
+   "slice_local": {
+    "owner_slice": "PR-H",
+    "named_test": "workers/PR-H/priority-then-age-ordering",
+    "why_no_invariant": "INV-R3 is about a lane's active-PR limit and says nothing about candidate ordering. Ordering is PR-H's own policy."
+   }
   }
  ]
 }

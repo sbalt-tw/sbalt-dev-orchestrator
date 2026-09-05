@@ -2,11 +2,18 @@
 
 These nine errata carry Founder decision authority and take precedence over any
 differing or ambiguous text in any earlier planning artifact. D1–D10 are approved **as
-amended by** them.
+amended by** them. Later Founder decisions D15–D19 take precedence over both.
 
-They are mapped into the existing 47 invariants. **No invariant was added, removed,
-merged or renumbered.** The mapping is recorded per invariant in
-[`manifests/invariants.json`](manifests/invariants.json) under `errata`.
+**FE-1 to FE-8** are mapped into the existing 47 invariants. **FE-9 is a
+documentation-status erratum and maps to no invariant**, deliberately: it records what the
+Plan v2.2 PDF is and is not, which is a fact about an artifact rather than a rule about the
+system. **No invariant was added, removed, merged or renumbered.**
+
+The mapping is recorded per invariant in
+[`manifests/invariants.json`](manifests/invariants.json) under `errata`, and the exact
+expected map is anchored in `tools/spec/anchors.ts`. The arrows below are prose for that
+anchor; the validator compares the two and fails on any difference, so this section cannot
+drift from the manifest.
 
 ---
 
@@ -35,14 +42,17 @@ merged or renumbered.** The mapping is recorded per invariant in
 
 ## FE-2 — Required use limit and provenance groups
 
-1. `use_limit` is never inferred by default in any of the six action kinds.
+1. `use_limit` is never inferred by default in any action kind. FE-2 was written when there
+   were six; D16 added `worker_dispatch` as a seventh, which likewise requires an explicit
+   positive integer bounded by a named policy parameter.
 2. `merge`, `production_write`, `destructive_operation`, `policy_weakening` and
    `waive_finding` fix `use_limit = 1`.
 3. `staging_write` requires an explicit positive integer `use_limit` and must not be
    OPTIONAL.
-4. Git provenance for staging and production writes is a structured group: none is
-   permitted; any implies `repository_identity`, `base_sha` and `head_sha` together;
-   `pr_number` only with `repository_identity`; no isolated head, base or PR number.
+4. Git provenance for staging writes, production writes and worker dispatches is a
+   structured group: none is permitted; any implies `repository_identity`, `base_sha` and
+   `head_sha` together; `pr_number` only with `repository_identity`; no isolated head,
+   base or PR number.
 5. A `policy_weakening` target uses an immutable policy ID.
 6. A policy key path or display name is not authoritative identity.
 7. The action matrix and the canonical-identity chapter must agree exactly.
@@ -59,7 +69,7 @@ the bound `evidence_snapshot_ref`; and fail closed when any required slot has a 
 failing, expired, unknown or missing observation. Findings and resolution events remain
 append-only.
 
-→ **INV-A4, INV-E1, INV-E2, INV-E3, INV-E4, INV-E7**
+→ **INV-A4, INV-A6, INV-E1, INV-E2, INV-E3, INV-E4, INV-E7**
 
 ## FE-4 — UNKNOWN cannot directly execute
 
@@ -71,7 +81,7 @@ not applied **and** same-key retry proven safe ⇒ a new fenced execution attemp
 created. Still unknown ⇒ back to UNKNOWN, blocked. Nothing is re-sent before a probe.
 Reconciliation claims and execution claims are distinguishable and persisted.
 
-→ **INV-X1, INV-X3, INV-L5, INV-L7**
+→ **INV-L5, INV-L7, INV-X1, INV-X3**
 
 ## FE-5 — Manual abandonment is not success
 
@@ -82,7 +92,7 @@ quarantined until a named remediation, compensation or proceed-under-known-risk 
 is separately approved. The audit record retains `effect_truth = UNKNOWN`. The Phase 0
 completion gate is not satisfied by renaming UNKNOWN to ABANDONED.
 
-→ **INV-X3, INV-S5, INV-A1**
+→ **INV-A1, INV-S5, INV-X3**
 
 ## FE-6 — External capacity is not released by lease expiry alone
 
@@ -99,7 +109,7 @@ invariants and any future provider-invocation invariant are expressed separately
 the current `/tmp` lock is a transitional operational mechanism that does not satisfy a
 durable global invariant.
 
-→ **INV-P1, INV-P2, INV-X2, INV-L5, INV-L7**
+→ **INV-L5, INV-L7, INV-P1, INV-P2, INV-X2**
 
 ## FE-7 — Fencing honesty
 
@@ -120,7 +130,7 @@ complete, D13 decided, D14 decided, the provider lifecycle specification approve
 writing, and a separate Founder authorisation. Before that, no real adapter
 implementation may begin.
 
-→ **INV-R1, INV-A1**
+→ **INV-A1, INV-R1**
 
 ## FE-9 — Plan PDF status
 
@@ -137,4 +147,5 @@ The earlier report of "14 pages, 0 blank" must not be cited as verified fact. Th
 in this directory are the canonical specification from PR-0 onward, and PR-0 does not
 produce a replacement planning PDF.
 
-→ documentation status; carries no invariant text change.
+→ documentation status only. FE-9 maps to no invariant, and the validator refuses a
+manifest that maps it to one.

@@ -31,9 +31,12 @@ In one immediate transaction:
 
 **Renew, release, report and effect-claim** each match all five of: subject, holder
 principal, `status = 'ACTIVE'`, unexpired on the authoritative clock, and the *exact*
-fencing token. A stale holder therefore cannot renew, cannot act, and cannot release the
-claim of the holder that displaced it. A heartbeat is a renewal and obeys the same five
-conditions, so an expired claim can never be revived by one.
+fencing token. A stale holder therefore cannot obtain a claim, cannot commit an
+authoritative result, and cannot release the claim of the holder that displaced it; any
+result it does deliver is rejected on arrival. It does **not** follow that the stale
+holder has stopped: a process already past the database boundary may still be running,
+and nothing in this section stops a remote physical act. A heartbeat is a renewal and
+obeys the same five conditions, so an expired claim can never be revived by one.
 
 ### Acceptance cases
 
@@ -41,8 +44,9 @@ conditions, so an expired claim can never be revived by one.
   without blocking.
 * Two concurrent acquisitions racing an expired claim: exactly one performs the expiry
   transition, exactly one holds afterwards.
-* A holder crashes; after expiry a new holder acquires; the revived original cannot
-  renew, act or release.
+* A holder crashes; after expiry a new holder acquires; the revived original cannot renew,
+  cannot commit an authoritative result and cannot release the new holder's claim. Whether
+  its own process is still running is a separate question the database cannot answer.
 * Renewal after expiry but before reconciliation: refused, and the claim is left for
   reconciliation.
 

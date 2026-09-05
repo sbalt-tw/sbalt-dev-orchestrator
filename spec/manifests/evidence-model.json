@@ -1,0 +1,80 @@
+{
+ "manifest_version": 1,
+ "authority": "D17",
+ "content_fields": [
+  {
+   "name": "evidence_slot_identity",
+   "note": "Immutable identity of the slot this observation fills. It is part of the content digest, never only mutable row metadata."
+  },
+  {
+   "name": "evidence_kind",
+   "note": "What sort of observation this is (for example ci_result, review_verdict)."
+  },
+  {
+   "name": "provider_immutable_identity",
+   "note": "The provider's immutable identity, never a display name."
+  },
+  {
+   "name": "project_identity",
+   "note": "prj:<uuid-v4>."
+  },
+  {
+   "name": "task_identity",
+   "note": "task:<uuid-v4>."
+  },
+  {
+   "name": "tuple",
+   "note": "The exact (repository, base, head) tuple, where the slot is tuple-bound."
+  },
+  {
+   "name": "logical_check_key",
+   "note": "The stable name of the check within the provider, so a renamed display label cannot silently become a different check."
+  },
+  {
+   "name": "provider_source_event_identity",
+   "note": "The provider's own identity for the event this observation reports."
+  },
+  {
+   "name": "source_generation",
+   "note": "The trusted, monotonic generation or revision the provider attaches to its own results. This, not time, decides which observation is current."
+  },
+  {
+   "name": "status",
+   "note": "The provider's status."
+  },
+  {
+   "name": "conclusion",
+   "note": "The provider's conclusion."
+  },
+  {
+   "name": "source_principal",
+   "note": "The authenticated principal that delivered it."
+  },
+  {
+   "name": "observed_at",
+   "note": "Recorded for audit. Never used to decide which observation is current, and never a tie-break."
+  }
+ ],
+ "ordering": {
+  "authoritative": "source_generation",
+  "rule": "The current observation for a slot is the one with the greatest trusted source generation. observed_at and database ingestion order are audit facts and are never used to order provider truth, and never as a tie-break.",
+  "forbidden_tiebreaks": [
+   "observed_at",
+   "database ingestion order",
+   "row id",
+   "insertion sequence"
+  ]
+ },
+ "conflict": {
+  "same_generation_same_digest": "IDEMPOTENT_DUPLICATE — the second delivery changes nothing.",
+  "same_generation_different_digest": "CONFLICTED — the whole slot fails closed. No observation in a conflicted slot may be used as gate evidence until the conflict is resolved by a new, greater generation from the provider.",
+  "no_maximal_generation": "CONFLICTED — if no single greatest generation exists, the slot fails closed."
+ },
+ "provider_admission": "A provider that offers no trusted monotonic ordering contract over its own results may not be used as gate evidence at all.",
+ "snapshot": "The snapshot is still computed over the sorted, newline-joined immutable content digests of the current observations.",
+ "redemption_triple": [
+  "the evidence snapshot recomputed from current observations equals the bound evidence_snapshot_ref",
+  "those observations satisfy the evidence policy currently in force",
+  "the tuple they are bound to still equals the effect tuple"
+ ]
+}

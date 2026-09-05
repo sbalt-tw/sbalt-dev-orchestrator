@@ -11,6 +11,7 @@ and an authorization for one would redeem against the other.
 | commit | Full 40-character hex, lowercased | Lowercasing is permitted *only* because Git object names are hexadecimal, so it loses nothing. A branch name is never substituted for a SHA. |
 | environment | Immutable environment ID | A renameable display name is never authoritative. |
 | resource · policy · finding | Stable immutable orchestrator IDs | Key paths and human labels are display only. |
+| worker provider | Immutable provider identity: `worker:<provider immutable id>` | The target of a `worker_dispatch`. A pool name, a hostname or a display label is never authoritative. |
 | principal | `principal:<uuid-v4>` | A display name never identifies a principal. |
 | serialization | Versioned, deterministic, unambiguous | Fixed field order, explicit types, no locale dependence, a separator that cannot occur inside a field. The version is part of what is hashed. |
 

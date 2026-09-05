@@ -2,9 +2,9 @@
 
 <!-- GENERATED FROM spec/manifests/invariants.json BY tools/spec/render.ts — DO NOT EDIT BY HAND. -->
 
-**47 invariants in 8 families.** Each carries four owners: who states it (normative), who enforces it (enforcement), who stores what it constrains (persistence), and who tests it (test). A persistence owner of `n/a` carries an explicit note saying why nothing is stored.
+**47 invariants in 8 families.** Each carries four owners: who states it (normative), who enforces it (enforcement), who stores what it constrains (persistence), and who tests it (test). A persistence owner of `n/a` carries an explicit note saying why nothing is stored, and only the two invariants the anchor permits may claim it.
 
-Statements marked **sharpened** were tightened by the Binding Founder Errata; the errata that reached each one are listed with it. See [12-errata.md](12-errata.md).
+Statements marked **sharpened** were tightened by the Binding Founder Errata or by a later Founder decision; the errata and decisions that reached each one are listed with it. See [12-errata.md](12-errata.md) and [09-decisions.md](09-decisions.md).
 
 ## Family A — authorization (9)
 
@@ -46,9 +46,9 @@ Introduced in PR-F; inherited by PR-G, PR-H, PR-I.
 
 ### INV-A3
 
-An authorization binds every field its action kind marks REQUIRED or FIXED and carries no field the kind marks FORBIDDEN. envelope_digest covers all twenty-four preceding fields and is an integrity and identity digest only, never a signature, a MAC or a proof of authority. A caller submits only an authorization_id or a redemption request; the runtime re-reads the immutable envelope from the authoritative database and never trusts a caller-supplied envelope on the strength of a matching digest.
+An authorization binds every field its action kind marks REQUIRED or FIXED, carries no field the kind marks FORBIDDEN, and satisfies every field-group constraint its kind declares, so half a provenance is refused. envelope_digest covers all twenty-four preceding fields and is an integrity and identity digest only, never a signature, a MAC or a proof of authority. A caller submits only an authorization_id or a redemption request; the runtime re-reads the immutable envelope from the authoritative database and never trusts a caller-supplied envelope on the strength of a matching digest.
 
-*Sharpened by FE-1, FE-2.*
+*Sharpened by FE-1, FE-2, D16.*
 
 | Owner | Slice |
 |---|---|
@@ -61,6 +61,8 @@ Introduced in PR-F; inherited by PR-G, PR-H, PR-I.
 
 - `conf/A3/PR-F/envelope-reread-from-store` (positive, PR-F) — Redemption reads the stored envelope and ignores any envelope supplied by the caller.
 - `conf/A3/PR-F/caller-supplied-envelope-refused` (negative, PR-F) — A caller-supplied envelope with a self-consistent digest, and an envelope missing a REQUIRED or carrying a FORBIDDEN field, are both refused.
+- `conf/A3/PR-F/provenance-group-none-or-whole` (positive, PR-F) — A staging_write, production_write or worker_dispatch envelope with no Git provenance, and one with repository_identity, base_sha and head_sha together, are both accepted.
+- `conf/A3/PR-F/isolated-head-base-or-pr-refused` (negative, PR-F) — An envelope carrying head_sha alone, base_sha alone, pr_number without repository_identity, or any other partial provenance, is refused.
 
 ### INV-A4
 
@@ -82,9 +84,9 @@ Introduced in PR-F; inherited by PR-G, PR-H, PR-I.
 
 ### INV-A5
 
-Uses are consumed by ordinal. Every action kind states its use_limit disposition explicitly and none is inferred: merge, production_write, destructive_operation, policy_weakening and waive_finding fix use_limit = 1; staging_write requires an explicit positive integer. Expiry is evaluated on the authoritative clock at redemption.
+Uses are consumed by ordinal. Every action kind states its use_limit disposition explicitly and none is inferred: merge, production_write, destructive_operation, policy_weakening and waive_finding fix use_limit = 1; staging_write and worker_dispatch require an explicit positive integer bounded above by a named policy parameter, and an implementation-chosen ceiling such as the largest representable integer does not satisfy that bound. Expiry is evaluated on the authoritative clock at redemption.
 
-*Sharpened by FE-2.*
+*Sharpened by FE-2, D16.*
 
 | Owner | Slice |
 |---|---|
@@ -97,6 +99,7 @@ Introduced in PR-F; inherited by PR-H, PR-I.
 
 - `conf/A5/PR-F/ordinals-are-consumed-once` (positive, PR-F) — A staging_write authorization with use_limit 3 yields exactly three distinct redemption identities.
 - `conf/A5/PR-F/absent-use-limit-is-refused` (negative, PR-F) — A staging_write envelope with no use_limit is refused rather than defaulted, and a fixed-limit kind carrying use_limit greater than 1 is refused.
+- `conf/A5/PR-F/use-limit-above-the-named-maximum-refused` (negative, PR-F) — A staging_write or worker_dispatch use_limit above worker_dispatch.max_use_limit, or equal to the largest representable integer, is refused.
 
 ### INV-A6
 
@@ -150,9 +153,9 @@ Introduced in PR-F; inherited by PR-H, PR-I.
 
 ### INV-A9
 
-Weakening a policy or a gate is itself a Founder-gated action requiring its own authorization. Its target is an immutable policy identity; a policy key path or display name is never authoritative identity.
+Weakening a policy or a gate is itself a Founder-gated action requiring its own authorization, and it may act only on an operational policy explicitly marked waivable; unmarked is non-waivable. The non-waivable set — INV-A1, the Phase 0 completion gate, the Phase 1A entry gate, the Founder staging, production and destructive gates, Codex independence, global reviewer capacity 1, the exact-head review requirement and one implementation PR per lane — can be changed only by a new specification PR carrying a Founder decision, never by a runtime policy_weakening envelope. Its target is an immutable policy identity; a key path or display name is never authoritative.
 
-*Sharpened by FE-2.*
+*Sharpened by FE-2, D18.*
 
 | Owner | Slice |
 |---|---|
@@ -165,14 +168,15 @@ Introduced in PR-F; inherited by PR-H.
 
 - `conf/A9/PR-H/weakening-requires-its-own-authorization` (positive, PR-H) — A gate is weakened only under a policy_weakening authorization naming the immutable policy id.
 - `conf/A9/PR-H/key-path-is-not-identity` (negative, PR-H) — An authorization naming a policy by key path or display name must not weaken the policy it appears to name.
+- `conf/A9/PR-H/non-waivable-targets-refused` (negative, PR-H) — A policy_weakening authorization naming any non-waivable subject, or a policy not marked waivable, is refused.
 
 ## Family E — evidence (8)
 
 ### INV-E1
 
-Every piece of evidence is an immutable, append-only observation bound to an exact (repository, base, head) tuple and meaningless outside it. Its content — status, conclusion, source principal, provider identity, tuple, observed_at — is fixed at write; a state change is a new observation, never a rewrite.
+Every piece of evidence is an immutable, append-only observation bound to an exact (repository, base, head) tuple where the slot is tuple-bound, and meaningless outside it. Its content — the evidence slot identity, the evidence kind, the provider's immutable identity, the project and task identity, the tuple, the logical check key, the provider's source event identity, its trusted source generation, the status, the conclusion, the source principal and observed_at — is fixed at write and wholly covered by the content digest, so the slot identity can never live only in mutable row metadata. A state change is a new observation, never a rewrite.
 
-*Sharpened by FE-3.*
+*Sharpened by FE-3, D17.*
 
 | Owner | Slice |
 |---|---|
@@ -188,9 +192,9 @@ Introduced in PR-D; inherited by PR-F, PR-G, PR-H.
 
 ### INV-E2
 
-No task becomes a merge candidate or reaches a terminal success state without CI recorded as passed for the exact current tuple, judged from the current evidence snapshot recomputed at redemption rather than from a stored digest alone.
+No task becomes a merge candidate or reaches a terminal success state without CI recorded as passed for the exact current tuple, judged from the current evidence snapshot recomputed at redemption. The current observation for a slot is the one carrying the greatest trusted source generation; observed_at and database ingestion order never order provider truth and never break a tie. Two different content digests at the same generation, or no single greatest generation, make the slot CONFLICTED and it fails closed. A provider with no trusted monotonic ordering contract may not supply gate evidence at all.
 
-*Sharpened by FE-3.*
+*Sharpened by FE-3, D17.*
 
 | Owner | Slice |
 |---|---|
@@ -203,6 +207,7 @@ Introduced in PR-F; inherited by PR-H, PR-I.
 
 - `conf/E2/PR-F/ci-passed-at-the-current-tuple` (positive, PR-F) — Merge candidacy requires a passing CI observation for the exact current tuple.
 - `conf/E2/PR-F/pending-ci-blocks-merge-readiness` (negative, PR-F) — A merge authorization granted while CI is pending must not carry the task to a terminal success state.
+- `conf/E2/PR-D/conflicted-slot-fails-closed` (negative, PR-D) — Two different content digests at the same source generation, or a tie broken by observed_at, must not yield a current observation.
 
 ### INV-E3
 
@@ -292,7 +297,9 @@ Introduced in PR-F; inherited by PR-H.
 
 ### INV-E8
 
-Repeated provider failure is reported as an infrastructure condition after a bounded number of attempts, never retried without bound.
+Repeated provider failure is reported as an infrastructure condition after at most two attempts for one exact operation on one exact tuple — the first attempt plus at most one retry, permitted only where a trusted terminal INFRA_ABORT supports it, never concurrent, each carrying its own durable attempt identity — and never retried without bound. Before a third attempt the task becomes BLOCKED with an INFRASTRUCTURE obligation and returns to the Founder. An external effect whose outcome is UNKNOWN is excluded from this rule: it is probed by redemption key first and never blindly re-sent.
+
+*Sharpened by D18.*
 
 | Owner | Slice |
 |---|---|
@@ -305,12 +312,15 @@ Introduced in PR-D; inherited by PR-G.
 
 - `conf/E8/PR-D/bounded-attempts` (positive, PR-D) — After the bound is reached the condition is escalated as infrastructure.
 - `conf/E8/PR-D/no-unbounded-retry` (negative, PR-D) — A permanently failing provider must not be retried without bound.
+- `conf/E8/PR-D/third-attempt-is-refused` (negative, PR-D) — A third attempt on one exact operation and tuple is refused and the task becomes BLOCKED with an INFRASTRUCTURE obligation.
 
 ## Family S — state (6)
 
 ### INV-S1
 
-Task state is a closed vocabulary, enforced at the application boundary and by the database.
+Task state is a closed vocabulary of exactly nine states — PENDING, READY, DISPATCHING, RUNNING, WAITING, BLOCKED, SUCCEEDED, FAILED, CANCELLED — of which SUCCEEDED, FAILED and CANCELLED are terminal. The vocabulary is enforced at the application boundary and by the database.
+
+*Sharpened by D15.*
 
 | Owner | Slice |
 |---|---|
@@ -323,10 +333,13 @@ Introduced in PR-A; inherited by PR-B, PR-C, PR-D, PR-E, PR-F, PR-G, PR-H, PR-I.
 
 - `conf/S1/PR-A/closed-vocabulary-at-both-boundaries` (positive, PR-A) — Every declared state round-trips through the application and the database.
 - `conf/S1/PR-A/unknown-state-refused-by-the-database` (negative, PR-A) — An unknown state string is refused by the application and, independently, by a database constraint.
+- `conf/S1/PR-B/nine-states-three-terminal` (negative, PR-B) — A tenth state, or a terminal state outside SUCCEEDED, FAILED and CANCELLED, is refused at both boundaries.
 
 ### INV-S2
 
-Every transition is explicitly permitted; there are no implicit transitions.
+Every transition is explicitly permitted. There is no wildcard, catch-all or default transition: every (state, event) pair carries an explicit ALLOWED or REFUSED decision, and a terminal state has no outgoing transition. Repeating terminal work means a new task or a new attempt with its own identity, never reviving the old one.
+
+*Sharpened by D15.*
 
 | Owner | Slice |
 |---|---|
@@ -339,10 +352,13 @@ Introduced in PR-B; inherited by PR-C, PR-D, PR-E, PR-F, PR-G, PR-H, PR-I.
 
 - `conf/S2/PR-B/permitted-transitions-only` (positive, PR-B) — Each transition in the table is accepted from its declared source state.
 - `conf/S2/PR-B/unlisted-transition-refused` (negative, PR-B) — An event not listed for the current state is refused and recorded.
+- `conf/S2/PR-B/no-wildcard-and-no-outgoing-terminal` (negative, PR-B) — Every (state, event) pair resolves to an explicit decision, and every event from a terminal state is refused.
 
 ### INV-S3
 
-Multi-target transitions resolve from persisted data. A caller may confirm the computed target, never choose it.
+Multi-target transitions resolve from persisted data. A caller submits an event and may assert what it believes to be true; it never submits the target state, and an assertion that contradicts persisted facts is refused rather than obeyed.
+
+*Sharpened by D15.*
 
 | Owner | Slice |
 |---|---|
@@ -358,7 +374,9 @@ Introduced in PR-B; inherited by PR-F, PR-H.
 
 ### INV-S4
 
-An interruption never clears an obligation. Recovery restores the pending gate, or applies the answer given during the outage.
+An interruption never clears an obligation. Waiting and blocking reasons are separately persisted obligations that the state label never overwrites; a task may hold several at once, and resolving one never clears another. Recovery restores every obligation still open, or applies the answer given during the outage.
+
+*Sharpened by D15.*
 
 | Owner | Slice |
 |---|---|
@@ -371,12 +389,13 @@ Introduced in PR-B; inherited by PR-F, PR-H.
 
 - `conf/S4/PR-B/recovery-restores-the-gate` (positive, PR-B) — A task interrupted at a gate returns to that gate.
 - `conf/S4/PR-F/outage-answer-is-not-lost` (negative, PR-F) — An answer given during the outage must neither be discarded nor strand the task with nothing left to answer.
+- `conf/S4/PR-B/resolving-one-obligation-keeps-the-others` (negative, PR-B) — With two obligations open, resolving one leaves the other open and the task not schedulable.
 
 ### INV-S5
 
-A crash never reads as success. A task without live authority becomes visibly blocked and re-running is an explicit decision. An effect entry closed by decision is not a success and never advances dependent work.
+A crash never reads as success. A task without live authority becomes visibly blocked and re-running is an explicit decision. A task reaches SUCCEEDED only when no obligation of any kind is open, no blocking finding on the current tuple is unresolved, CI is recorded as passed for the exact current tuple, the acting principal holds a valid unexpired lease, and no effect for that task is UNKNOWN_PENDING_RECONCILIATION or ABANDONED_BY_DECISION. An effect closed by decision is not a success: it never releases an obligation, never satisfies a dependency and never advances dependent work.
 
-*Sharpened by FE-5.*
+*Sharpened by FE-5, D15.*
 
 | Owner | Slice |
 |---|---|
@@ -389,10 +408,13 @@ Introduced in PR-C; inherited by PR-E, PR-H.
 
 - `conf/S5/PR-C/crash-residue-is-visible` (positive, PR-C) — A task running with no live lease becomes visibly blocked.
 - `conf/S5/PR-H/abandonment-does-not-advance-dependents` (negative, PR-H) — An entry closed by decision must not release dependent work.
+- `conf/S5/PR-B/success-preconditions-are-conjunctive` (negative, PR-B) — Violating any single success precondition — an open obligation, an unresolved blocker, missing exact-tuple CI, an invalid lease, an UNKNOWN effect, an ABANDONED effect — refuses DEFINITIVE_SUCCESS.
 
 ### INV-S6
 
-Audit history is append-only. A refusal, a finding or a prior state is never overwritten or erased.
+Audit history is append-only. A refusal — including every refused transition, recorded with its event, its source state and its refusal reason — a finding, or a prior state is never overwritten or erased.
+
+*Sharpened by D15.*
 
 | Owner | Slice |
 |---|---|
@@ -405,6 +427,7 @@ Introduced in PR-A; inherited by PR-B, PR-C, PR-D, PR-E, PR-F, PR-G, PR-H, PR-I.
 
 - `conf/S6/PR-A/history-is-append-only` (positive, PR-A) — A refusal and a prior state both remain readable after later writes.
 - `conf/S6/PR-A/history-rows-cannot-be-updated` (negative, PR-A) — Updating or deleting an audit row is refused by the database.
+- `conf/S6/PR-B/refused-transitions-are-recorded` (negative, PR-B) — A refused transition that leaves no history row fails the check.
 
 ## Family L — authority-and-leases (8)
 
@@ -564,9 +587,9 @@ Introduced in PR-E; inherited by PR-F, PR-H.
 
 ### INV-X2
 
-Every external effect carries an idempotency key — redemption_key — unique per use and binding the effect parameters, and is safe to retry under that key. An action kind whose provider cannot honour that key, or offers no probe by which a prior effect can be detected, is not registrable as executable.
+Every external effect carries an idempotency key — redemption_key — unique per use and binding the effect parameters, and is safe to retry under that key; a retry of the same redemption always reuses its key. An action kind whose provider cannot honour that key, or offers no probe by which a prior effect can be detected, is not registrable as executable.
 
-*Sharpened by FE-6, FE-7.*
+*Sharpened by FE-6, FE-7, D16.*
 
 | Owner | Slice |
 |---|---|
@@ -620,9 +643,9 @@ Introduced in PR-F; inherited by PR-H.
 
 ### INV-R1
 
-Gates are monotonic. Loading configuration may change capacity; it may never weaken or clear a persisted gate. The Phase 0 completion gate and the Phase 1A entry gate are separate gates, and satisfying one never satisfies the other.
+Gates are monotonic. Loading configuration may change capacity; it may never weaken or clear a persisted gate. The Phase 0 completion gate and the Phase 1A entry gate are separate gates, satisfying one never satisfies the other, and both are non-waivable.
 
-*Sharpened by FE-8.*
+*Sharpened by FE-8, D18.*
 
 | Owner | Slice |
 |---|---|
@@ -774,19 +797,21 @@ Introduced in PR-C; inherited by PR-D, PR-E, PR-F, PR-G, PR-H.
 
 ### INV-M3
 
-Upgrades preserve every row, every reference and all provenance; referential integrity is verified before commit.
+Upgrades preserve every row, every reference and all provenance; referential integrity is verified before commit. Each migrating slice, beginning with PR-C, owns and ships the populated-upgrade preservation test for its own version step. PR-A defines v1 and has no predecessor to upgrade, so it owns the runner check rather than a preservation test.
+
+*Sharpened by D19.*
 
 | Owner | Slice |
 |---|---|
 | normative | PR-0 |
-| enforcement | PR-A |
-| persistence | n/a — M3 constrains the upgrade procedure the PR-A runner performs; it adds no stored row of its own. |
+| enforcement | PR-A, PR-C, PR-D, PR-E, PR-F, PR-G, PR-H |
+| persistence | PR-C, PR-D, PR-E, PR-F, PR-G, PR-H |
 | test | PR-C, PR-D, PR-E, PR-F, PR-G, PR-H |
 
 Introduced in PR-A; inherited by PR-C, PR-D, PR-E, PR-F, PR-G, PR-H.
 
-- `conf/M3/PR-A/rows-and-references-survive` (positive, PR-A) — Row counts and every foreign-key relationship survive the upgrade.
-- `conf/M3/PR-A/integrity-violation-rolls-back` (negative, PR-A) — A migration that would break a reference rolls back and leaves the database untouched.
+- `conf/M3/PR-C/populated-v1-upgrades-losslessly` (positive, PR-C) — PR-C upgrades a populated v1 fixture with every row, reference and provenance preserved; each later migrating slice repeats this for its own step.
+- `conf/M3/PR-C/integrity-violation-rolls-back` (negative, PR-C) — A migration that would break a reference or drop provenance rolls back and leaves the database untouched.
 
 ### INV-M4
 

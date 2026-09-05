@@ -1,0 +1,47 @@
+{
+ "manifest_version": 1,
+ "authority": [
+  "D16",
+  "D18"
+ ],
+ "note": "Named, bounded policy parameters. A parameter with no stated finite maximum is not 'bounded'; an implementation-chosen ceiling such as Number.MAX_SAFE_INTEGER does not satisfy a bound.",
+ "parameters": [
+  {
+   "key": "worker_dispatch.max_use_limit",
+   "type": "positive_integer",
+   "value": 16,
+   "maximum": 16,
+   "waivable": false,
+   "authority": "D16",
+   "note": "The largest use_limit a worker_dispatch authorization may carry. use_limit is REQUIRED, a positive integer, and at most this value."
+  },
+  {
+   "key": "infrastructure.max_attempts_per_operation",
+   "type": "positive_integer",
+   "value": 2,
+   "maximum": 2,
+   "waivable": false,
+   "authority": "D18",
+   "note": "Total attempts for one exact operation on one exact tuple: the first attempt plus at most one retry, and only where a trusted terminal INFRA_ABORT supports it."
+  },
+  {
+   "key": "review.completed_verdict_rounds.default",
+   "type": "positive_integer",
+   "value": 2,
+   "maximum": 3,
+   "waivable": false,
+   "authority": "D9",
+   "note": "Two completed-verdict rounds per slice; PR-F carries three and PR-I one. Extending a budget is a Founder decision, not a policy edit."
+  }
+ ],
+ "infrastructure_retry": {
+  "attempts": 2,
+  "shape": "the first attempt, plus at most one retry",
+  "retry_precondition": "the previous attempt ended in a trusted terminal INFRA_ABORT classified by a reviewer or provider, never self-classified by a worker",
+  "concurrency": "retries are never concurrent; at most one attempt for an operation may be in flight",
+  "attempt_identity": "each attempt carries its own durable attempt identity",
+  "on_exhaustion": "before a third attempt the task becomes BLOCKED with an INFRASTRUCTURE obligation and returns to the Founder",
+  "budget": "an infrastructure abort consumes no completed-verdict round",
+  "unknown_effects_excluded": "This rule does not apply to an external effect whose outcome is UNKNOWN. Such an effect is never blindly re-sent: it is probed by redemption_key first and re-executed only when the probe confirms non-application and the provider contract proves same-key retry safe."
+ }
+}

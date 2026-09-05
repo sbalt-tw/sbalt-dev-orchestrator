@@ -6,6 +6,10 @@ unmerged and unmodified**. Its branch and its full review history are retained: 
 the only durable record of rounds 1–5, and [14-findings.md](14-findings.md) depends on
 them.
 
+Canonical data: [`manifests/pr1-ordering.json`](manifests/pr1-ordering.json). The table
+below is prose for the same seven steps; the validator checks the manifest against a code
+anchor, so moving a sentence in this document changes nothing.
+
 ## Strict ordering
 
 | Step | Action | Gate |

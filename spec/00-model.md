@@ -86,7 +86,8 @@ These words have exactly one meaning in this specification.
 | **Lane** | A persisted queue with limits. Not a worker, not an agent. |
 | **Worker** | Disposable compute holding a claim. Never a source of truth. |
 | **Principal** | An authenticated identity with a durable record and a role. |
-| **State** | A member of the closed task vocabulary. |
+| **State** | A member of the closed nine-state task vocabulary; see [15-task-state.md](15-task-state.md). |
+| **Obligation** | A separately persisted reason a task is waiting or blocked. Several may be open at once, and the state label never overwrites one. |
 | **Transition** | An explicitly permitted move between states. |
 | **Event** | The named cause of a transition. |
 | **Wait** | One gate episode: the question asked, and the answers that belong to it. |

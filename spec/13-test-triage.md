@@ -1,7 +1,8 @@
 # 13 · Test triage
 
 Canonical data: [`manifests/test-triage.json`](manifests/test-triage.json) — exactly
-141 rows.
+141 rows. The row count, the disposition census, the frozen source head, the per-file
+counts and the set of slice-local rows are anchored in `tools/spec/anchors.ts`.
 
 ## Source
 
@@ -36,14 +37,35 @@ that head: **141**.
 | `REWRITE` | 30 | The obligation survives but the model it asserted against does not; it returns in the target slice under a stated replacement name. |
 | `DROP` | 5 | The scenario tested an artefact of PR #1 that the clean baseline never creates. |
 
-Every row carries `source_head`, `source_file`, the scenario name, mapped invariant IDs,
-a disposition, a rationale, a target slice, a replacement name where the disposition is
-`REWRITE`, and an audit note.
+## How a row is justified
+
+Round 1 found several rows mapped to invariants whose statements do not carry the
+obligation: dependency-cycle rejection mapped to INV-A1, worker-capability matching to
+INV-L2, priority-then-age ordering to INV-R3. None of those invariants says any such
+thing. Forcing a row onto an invariant to make the column non-empty is worse than
+admitting the gap, so every row now declares **how** it is justified:
+
+| `mapping_basis` | Requires |
+|---|---|
+| `invariant` | At least one named invariant whose *statement* actually carries the obligation, and no slice-local detail. |
+| `slice_local` | No invariant at all, plus an owning slice, the named test that will carry it, and a written reason why no invariant applies. |
+
+Ten rows are slice-local: 14, 15, 16, 17 (PR-I — the demo, the read-only project adapter
+and risk classification) and 23, 24, 25, 65, 140, 141 (PR-H — graph acyclicity, paused
+lanes, capability matching and candidate ordering). These are real obligations the
+scheduler and the operator surface own; they are simply not system invariants, and saying
+so is more useful than a mapping that would let PR-H omit the behaviour while every named
+conformance test still passed.
+
+Four rows were remapped rather than reclassified: 21, 22, 47 and 110 now map to INV-S2 and
+INV-S3, because the D15 transition table genuinely states dependency satisfaction and
+target resolution.
 
 ## Rules
 
-* **No estimation, and no file-level mapping.** One row per scenario.
-* A duplicate row, a missing row, or an unknown disposition fails the validator.
+* **No estimation, and no file-level mapping.** One row per scenario, with its line.
+* A duplicate row, a missing row, an unknown disposition or an unknown mapping basis fails
+  the validator, as does a per-file count that does not match the anchor.
 * Every `DROP` carries a reason, and is permitted only when the invariants named on that
   row carry the obligation in their own conformance tests.
 * Every `REWRITE` carries a target slice and a planned replacement test identity.

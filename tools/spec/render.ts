@@ -18,17 +18,17 @@ export function renderInvariants(m: InvariantManifest): string {
     `**${m.census.invariants} invariants in ${m.census.families} families.** Each carries four owners: ` +
       'who states it (normative), who enforces it (enforcement), who stores what it constrains ' +
       '(persistence), and who tests it (test). A persistence owner of `n/a` carries an explicit note ' +
-      'saying why nothing is stored.',
+      'saying why nothing is stored, and only the two invariants the anchor permits may claim it.',
   );
   lines.push('');
   lines.push(
-    'Statements marked **sharpened** were tightened by the Binding Founder Errata; the errata that ' +
-      'reached each one are listed with it. See [12-errata.md](12-errata.md).',
+    'Statements marked **sharpened** were tightened by the Binding Founder Errata or by a later Founder ' +
+      'decision; the errata and decisions that reached each one are listed with it. See ' +
+      '[12-errata.md](12-errata.md) and [09-decisions.md](09-decisions.md).',
   );
   lines.push('');
 
-  const families = Object.keys(m.families);
-  for (const family of families) {
+  for (const family of Object.keys(m.families)) {
     const members = m.invariants.filter((i) => i.family === family);
     lines.push(`## Family ${family} — ${m.families[family]} (${members.length})`);
     lines.push('');
@@ -38,7 +38,8 @@ export function renderInvariants(m: InvariantManifest): string {
       lines.push(inv.statement);
       lines.push('');
       if (inv.sharpened) {
-        lines.push(`*Sharpened by ${inv.errata.join(', ')}.*`);
+        const sources = [...inv.errata, ...(inv.decisions ?? [])];
+        lines.push(`*Sharpened by ${sources.join(', ') || 'an earlier revision'}.*`);
         lines.push('');
       }
       const owners = inv.owners;
@@ -47,7 +48,7 @@ export function renderInvariants(m: InvariantManifest): string {
       lines.push(`| normative | ${owners.normative} |`);
       lines.push(`| enforcement | ${owners.enforcement.join(', ')} |`);
       lines.push(
-        `| persistence | ${owners.persistence}${owners.persistence_note ? ` — ${owners.persistence_note}` : ''} |`,
+        `| persistence | ${owners.persistence.join(', ')}${owners.persistence_note ? ` — ${owners.persistence_note}` : ''} |`,
       );
       lines.push(`| test | ${owners.test.join(', ')} |`);
       lines.push('');
@@ -67,8 +68,7 @@ export function renderInvariants(m: InvariantManifest): string {
 function main(): void {
   const root = repoRoot();
   const bundle = loadBundle(root);
-  const text = renderInvariants(bundle.invariants);
-  writeFileSync(join(root, 'spec', '01-invariants.md'), text, 'utf8');
+  writeFileSync(join(root, 'spec', '01-invariants.md'), renderInvariants(bundle.invariants), 'utf8');
   console.log('wrote spec/01-invariants.md');
 }
 

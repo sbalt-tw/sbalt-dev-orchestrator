@@ -1,89 +1,887 @@
 {
-  "manifest_version": 1,
-  "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
-  "note": "The durable record of rounds 1 to 4 is the four fix-commit messages on PR #1 (92ccee6, 0521578, 019a07e, 428ae75). Round 5 produced no fix commit; its findings are the list returned to the Founder when the budget was exhausted. Where a round's aggregate verdict counts more findings than its durable record itemises, the remainder is carried as an explicit debt entry rather than silently dropped.",
+ "manifest_version": 1,
+ "source_head": "428ae75e91fa1dd23c371d5f7af745aba0bec7fd",
+ "note": "The durable record of rounds 1 to 4 is the four fix-commit messages on PR #1 (92ccee6, 0521578, 019a07e, 428ae75). Round 5 produced no fix commit; its findings are the list returned to the Founder when the budget was exhausted. Where a round's aggregate verdict counts more findings than its durable record itemises, the remainder is carried as an explicit debt entry rather than silently dropped.",
+ "rounds": [
+  {
+   "round": 1,
+   "head": "c37af33",
+   "aggregate": {
+    "blocker": 0,
+    "high": 9,
+    "medium": 3,
+    "low": 0
+   },
+   "itemised": 9,
+   "unitemised": 3,
+   "unitemised_debt": "DEBT-1"
+  },
+  {
+   "round": 2,
+   "head": "92ccee6",
+   "aggregate": {
+    "blocker": 0,
+    "high": 9,
+    "medium": 2,
+    "low": 0
+   },
+   "itemised": 10,
+   "unitemised": 1,
+   "unitemised_debt": "DEBT-1"
+  },
+  {
+   "round": 3,
+   "head": "0521578",
+   "aggregate": {
+    "blocker": 3,
+    "high": 3,
+    "medium": 0,
+    "low": 0
+   },
+   "itemised": 6,
+   "unitemised": 0,
+   "unitemised_debt": null
+  },
+  {
+   "round": 4,
+   "head": "019a07ea",
+   "aggregate": {
+    "critical": 3,
+    "high": 6,
+    "medium": 0,
+    "low": 0
+   },
+   "itemised": 9,
+   "unitemised": 0,
+   "unitemised_debt": null
+  },
+  {
+   "round": 5,
+   "head": "428ae75",
+   "aggregate": {
+    "critical": 1,
+    "high": 6,
+    "medium": 1,
+    "low": 0
+   },
+   "itemised": 8,
+   "unitemised": 0,
+   "unitemised_debt": null
+  }
+ ],
+ "findings": [
+  {
+   "id": "R1-F1",
+   "round": 1,
+   "severity": "HIGH",
+   "title": "Task state could leave its own vocabulary",
+   "invariants": [
+    "INV-S1"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-A",
+   "note": "Closed by a closed vocabulary enforced at both the application and the database boundary."
+  },
+  {
+   "id": "R1-F2",
+   "round": 1,
+   "severity": "HIGH",
+   "title": "Multi-target transitions took the caller's word",
+   "invariants": [
+    "INV-S3"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-B",
+   "note": "Targets resolve from persisted rows; a caller may confirm, never choose."
+  },
+  {
+   "id": "R1-F3",
+   "round": 1,
+   "severity": "HIGH",
+   "title": "Configuration could remove the gates, including the infra-abort rule",
+   "invariants": [
+    "INV-R1",
+    "INV-E5"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-H",
+   "note": "Gates are monotonic under configuration load and the infra-abort rule is not configurable."
+  },
+  {
+   "id": "R1-F4",
+   "round": 1,
+   "severity": "HIGH",
+   "title": "A gated resource could name no authorising category and so gate nothing",
+   "invariants": [
+    "INV-R1",
+    "INV-A1"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-H"
+  },
+  {
+   "id": "R1-F5",
+   "round": 1,
+   "severity": "HIGH",
+   "title": "Dependencies were checked once, not at dispatch",
+   "invariants": [
+    "INV-L1",
+    "INV-A1"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-H",
+   "note": "Every limit and dependency is re-read inside the dispatch transaction."
+  },
+  {
+   "id": "R1-F6",
+   "round": 1,
+   "severity": "HIGH",
+   "title": "Dispatch was a sequence of autocommits, so two schedulers could both see room",
+   "invariants": [
+    "INV-R4",
+    "INV-X4"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-H"
+  },
+  {
+   "id": "R1-F7",
+   "round": 1,
+   "severity": "HIGH",
+   "title": "Reconciliation could defeat itself and strand what leases cannot reach",
+   "invariants": [
+    "INV-S5",
+    "INV-L5"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-C"
+  },
+  {
+   "id": "R1-F8",
+   "round": 1,
+   "severity": "HIGH",
+   "title": "An accepted report could move nothing and strand the task",
+   "invariants": [
+    "INV-S2",
+    "INV-L3"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-G"
+  },
+  {
+   "id": "R1-F9",
+   "round": 1,
+   "severity": "HIGH",
+   "title": "Budget exhaustion parked a task with nothing the Founder could resolve",
+   "invariants": [
+    "INV-A1",
+    "INV-S4"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-F"
+  },
+  {
+   "id": "R2-F1",
+   "round": 2,
+   "severity": null,
+   "title": "Migration 1 was hardened in place, leaving earlier databases unconstrained",
+   "invariants": [
+    "INV-M1"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-A",
+   "severity_note": "Round 2 severities are recorded in aggregate only; the durable record does not attribute a severity to each item."
+  },
+  {
+   "id": "R2-F2",
+   "round": 2,
+   "severity": null,
+   "title": "An injected policy object was trusted without re-parsing",
+   "invariants": [
+    "INV-A1",
+    "INV-R1"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-A"
+  },
+  {
+   "id": "R2-F3",
+   "round": 2,
+   "severity": null,
+   "title": "A task interrupted while waiting for CI could never be recovered",
+   "invariants": [
+    "INV-S4"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-B"
+  },
+  {
+   "id": "R2-F4",
+   "round": 2,
+   "severity": null,
+   "title": "Reconciliation read its eligibility outside the transaction that acted on it",
+   "invariants": [
+    "INV-L5",
+    "INV-X4"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-C"
+  },
+  {
+   "id": "R2-F5",
+   "round": 2,
+   "severity": null,
+   "title": "A report naming another worker's id set that worker idle while it was busy",
+   "invariants": [
+    "INV-L3",
+    "INV-L5"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-G"
+  },
+  {
+   "id": "R2-F6",
+   "round": 2,
+   "severity": null,
+   "title": "Two decision requests in one report raised two rows but one transition",
+   "invariants": [
+    "INV-A8",
+    "INV-S4"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-F"
+  },
+  {
+   "id": "R2-F7",
+   "round": 2,
+   "severity": null,
+   "title": "Two resolvers could both write, the second overwriting the record of the first",
+   "invariants": [
+    "INV-X4",
+    "INV-S6"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-F"
+  },
+  {
+   "id": "R2-F8",
+   "round": 2,
+   "severity": null,
+   "title": "A gated resource was checked after the already-held shortcut, and an inconsistent flag or category counted as ungated",
+   "invariants": [
+    "INV-R1"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-H"
+  },
+  {
+   "id": "R2-F9",
+   "round": 2,
+   "severity": null,
+   "title": "The no-transition backstop invented an infrastructure failure, hiding producer bugs",
+   "invariants": [
+    "INV-E6",
+    "INV-S2"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-G"
+  },
+  {
+   "id": "R2-F10",
+   "round": 2,
+   "severity": null,
+   "title": "A dependency's required state was an unchecked string that could park downstream work forever",
+   "invariants": [
+    "INV-S1"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-H"
+  },
+  {
+   "id": "R3-F1",
+   "round": 3,
+   "severity": "BLOCKER",
+   "title": "Migration 2 could not upgrade a populated v1 database: defer_foreign_keys does not permit dropping a referenced parent",
+   "invariants": [
+    "INV-M2",
+    "INV-M3"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-A"
+  },
+  {
+   "id": "R3-F2",
+   "round": 3,
+   "severity": "BLOCKER",
+   "title": "INFRA_FAILURE entered from FOUNDER_DECISION recovered to QUEUED, routing around the gate",
+   "invariants": [
+    "INV-S4",
+    "INV-A1"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-B"
+  },
+  {
+   "id": "R3-F3",
+   "round": 3,
+   "severity": "BLOCKER",
+   "title": "With several decisions open only the last resolved target applied, and a cancelled decision still counted as resolved",
+   "invariants": [
+    "INV-A2",
+    "INV-A8"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-F"
+  },
+  {
+   "id": "R3-F4",
+   "round": 3,
+   "severity": "HIGH",
+   "title": "Migration relabelled every unknown legacy gated resource as production_write",
+   "invariants": [
+    "INV-R2",
+    "INV-A1"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-A"
+  },
+  {
+   "id": "R3-F5",
+   "round": 3,
+   "severity": "HIGH",
+   "title": "The validated policy object stayed mutable, so a gate could be opened at runtime",
+   "invariants": [
+    "INV-R1",
+    "INV-A1"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-A"
+  },
+  {
+   "id": "R3-F6",
+   "round": 3,
+   "severity": "HIGH",
+   "title": "Worker-report authorisation happened outside the transaction that applied the report",
+   "invariants": [
+    "INV-L3",
+    "INV-X4"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-G"
+  },
+  {
+   "id": "R4-F1",
+   "round": 4,
+   "severity": "CRITICAL",
+   "title": "An omitted outcome defaulted to APPROVED",
+   "invariants": [
+    "INV-A2"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-F"
+  },
+  {
+   "id": "R4-F2",
+   "round": 4,
+   "severity": "CRITICAL",
+   "title": "A legacy row recording only that a decision was RESOLVED migrated into an approval",
+   "invariants": [
+    "INV-R2",
+    "INV-A2"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-A"
+  },
+  {
+   "id": "R4-F3",
+   "round": 4,
+   "severity": "CRITICAL",
+   "title": "A null outcome passed its own CHECK because IN against NULL evaluates to NULL",
+   "invariants": [
+    "INV-A2",
+    "INV-S1"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-A"
+  },
+  {
+   "id": "R4-F4",
+   "round": 4,
+   "severity": "HIGH",
+   "title": "Version 2 was corrected in place after it had already been reviewed and applied",
+   "invariants": [
+    "INV-M1"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-A"
+  },
+  {
+   "id": "R4-F5",
+   "round": 4,
+   "severity": "HIGH",
+   "title": "An old answer decided new questions: continuation read every decision the task ever had",
+   "invariants": [
+    "INV-A7"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-F"
+  },
+  {
+   "id": "R4-F6",
+   "round": 4,
+   "severity": "HIGH",
+   "title": "A gate answered during an outage stranded its task with nothing left to answer",
+   "invariants": [
+    "INV-S4"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-B"
+  },
+  {
+   "id": "R4-F7",
+   "round": 4,
+   "severity": "HIGH",
+   "title": "An accepted report could contain a refused transition while its verdict persisted",
+   "invariants": [
+    "INV-X4",
+    "INV-E4"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-G"
+  },
+  {
+   "id": "R4-F8",
+   "round": 4,
+   "severity": "HIGH",
+   "title": "A policy sync could turn a migrated legacy gate ungated",
+   "invariants": [
+    "INV-R1",
+    "INV-R2"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-H"
+  },
+  {
+   "id": "R4-F9",
+   "round": 4,
+   "severity": "HIGH",
+   "title": "A lease past its TTL but ahead of the next tick was still authority",
+   "invariants": [
+    "INV-L5",
+    "INV-L6"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-C"
+  },
+  {
+   "id": "R5-F1",
+   "round": 5,
+   "severity": "CRITICAL",
+   "title": "Merge authorisation was context-free: it applied with CI still pending, and survived a change of head",
+   "invariants": [
+    "INV-E2",
+    "INV-A4",
+    "INV-E7"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-F",
+   "note": "Closed by binding the authorization to (repository, base, head), invalidating it on any change, and requiring a passing CI observation for the current tuple."
+  },
+  {
+   "id": "R5-F2",
+   "round": 5,
+   "severity": "HIGH",
+   "title": "Review cleanliness compared headSha only, so changing the base preserved an obsolete review",
+   "invariants": [
+    "INV-E7",
+    "INV-E1"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-D"
+  },
+  {
+   "id": "R5-F3",
+   "round": 5,
+   "severity": "HIGH",
+   "title": "upsertResource could overwrite a gate unconditionally",
+   "invariants": [
+    "INV-R1"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-H"
+  },
+  {
+   "id": "R5-F4",
+   "round": 5,
+   "severity": "HIGH",
+   "title": "A heartbeat could revive an expired lease, bypassing the report-time expiry check",
+   "invariants": [
+    "INV-L6",
+    "INV-L5"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-C"
+  },
+  {
+   "id": "R5-F5",
+   "round": 5,
+   "severity": "HIGH",
+   "title": "Creating a decision and transitioning to the gate were not one transaction, which could split the wait episode",
+   "invariants": [
+    "INV-X4",
+    "INV-A7"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-F"
+  },
+  {
+   "id": "R5-F6",
+   "round": 5,
+   "severity": "HIGH",
+   "title": "Migration 3 conflated two different v2 shapes and would erase real refusal and cancellation audit",
+   "invariants": [
+    "INV-M1",
+    "INV-R2"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-A"
+  },
+  {
+   "id": "R5-F7",
+   "round": 5,
+   "severity": "HIGH",
+   "title": "The lane active-PR limit omitted the gate and blocked states",
+   "invariants": [
+    "INV-R3"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-H"
+  },
+  {
+   "id": "R5-F8",
+   "round": 5,
+   "severity": "MEDIUM",
+   "title": "Documentation described a command that cannot work as written and a flag the implementation ignores",
+   "invariants": [
+    "INV-A2"
+   ],
+   "disposition": "FIX",
+   "closed_in": "PR-I",
+   "note": "Closed by the documentation-conformance check: no documented command may fail when run as written."
+  }
+ ],
+ "carried_debt": [
+  {
+   "id": "DEBT-1",
+   "title": "Four medium findings from rounds 1 and 2 whose individual text is not recoverable",
+   "invariants": [
+    "INV-E1",
+    "INV-S6"
+   ],
+   "disposition": "DEFER",
+   "owner": "Founder",
+   "target": "Phase 1A entry gate",
+   "note": "Round 1 counted three mediums and round 2 counted two against nine and ten itemised repairs respectively; four findings are therefore recorded only in aggregate. Their texts exist in no durable artifact, which is itself the defect: PR #1 never persisted review findings as immutable observations. The recurrence is closed by INV-E1 and INV-S6, which make every finding an append-only observation from PR-D onward. Whether the four must be recovered before Phase 1A is a Founder decision, not an engineering one."
+  },
+  {
+   "id": "DEBT-2",
+   "title": "A review or CI report must hold an active claim, not merely be registered",
+   "invariants": [
+    "INV-L3",
+    "INV-L5"
+   ],
+   "disposition": "FIX",
+   "owner": "PR-G",
+   "target": "PR-G",
+   "note": "Round-1 MEDIUM 15 found the earlier wording — 'assert whatever PR-G decides' — was not a testable obligation and reintroduced a default. The rule is now fixed here, fail-closed, and PR-G implements it rather than deciding it.",
+   "rule": "A report carrying a verdict, a CI conclusion or any other evidence is authorised exactly as an outcome report is: the reporting principal must be registered AND must hold an active, unexpired claim for that subject. Registration alone is not authority.",
+   "exit_condition": "PR-G ships conf/L3/PR-G/review-report-authorisation-requires-a-claim as a positive test and conf/L5/PR-G/registered-without-a-claim-is-refused as a negative test, both asserting the rule above. DEBT-2 closes when both pass; it does not close by PR-G choosing a different answer."
+  },
+  {
+   "id": "DEBT-3",
+   "title": "The transitional /tmp Codex lock is not a durable global invariant",
+   "invariants": [
+    "INV-P1",
+    "INV-P2"
+   ],
+   "disposition": "ACCEPT",
+   "owner": "PR-0",
+   "target": "PR-C",
+   "note": "Accepted as an operational mechanism for the period before PR-C exists. It is a file on one host with no fencing, no expiry reconciliation and no in-flight accounting, and the specification does not claim it satisfies INV-P1 or INV-P2 (FE-6)."
+  }
+ ],
+ "pr0_review": {
+  "pr": 2,
+  "reviewed_base": "855ff2b3b139ad8f17fd04118fa5ec090616a24b",
   "rounds": [
-    { "round": 1, "head": "c37af33", "aggregate": { "blocker": 0, "high": 9, "medium": 3, "low": 0 }, "itemised": 9, "unitemised": 3, "unitemised_debt": "DEBT-1" },
-    { "round": 2, "head": "92ccee6", "aggregate": { "blocker": 0, "high": 9, "medium": 2, "low": 0 }, "itemised": 10, "unitemised": 1, "unitemised_debt": "DEBT-1" },
-    { "round": 3, "head": "0521578", "aggregate": { "blocker": 3, "high": 3, "medium": 0, "low": 0 }, "itemised": 6, "unitemised": 0, "unitemised_debt": null },
-    { "round": 4, "head": "019a07ea", "aggregate": { "critical": 3, "high": 6, "medium": 0, "low": 0 }, "itemised": 9, "unitemised": 0, "unitemised_debt": null },
-    { "round": 5, "head": "428ae75", "aggregate": { "critical": 1, "high": 6, "medium": 1, "low": 0 }, "itemised": 8, "unitemised": 0, "unitemised_debt": null }
+   {
+    "round": 1,
+    "head": "88b7a77f544d70a01697342ed8bcd74fdcaa395e",
+    "verdict": {
+     "blocker": 6,
+     "high": 8,
+     "medium": 6,
+     "low": 2
+    },
+    "itemised": 22,
+    "disposition_authority": "D19",
+    "disposition": "FIX for all 22"
+   }
   ],
   "findings": [
-    { "id": "R1-F1", "round": 1, "severity": "HIGH", "title": "Task state could leave its own vocabulary", "invariants": ["INV-S1"], "disposition": "FIX", "closed_in": "PR-A", "note": "Closed by a closed vocabulary enforced at both the application and the database boundary." },
-    { "id": "R1-F2", "round": 1, "severity": "HIGH", "title": "Multi-target transitions took the caller's word", "invariants": ["INV-S3"], "disposition": "FIX", "closed_in": "PR-B", "note": "Targets resolve from persisted rows; a caller may confirm, never choose." },
-    { "id": "R1-F3", "round": 1, "severity": "HIGH", "title": "Configuration could remove the gates, including the infra-abort rule", "invariants": ["INV-R1", "INV-E5"], "disposition": "FIX", "closed_in": "PR-H", "note": "Gates are monotonic under configuration load and the infra-abort rule is not configurable." },
-    { "id": "R1-F4", "round": 1, "severity": "HIGH", "title": "A gated resource could name no authorising category and so gate nothing", "invariants": ["INV-R1", "INV-A1"], "disposition": "FIX", "closed_in": "PR-H" },
-    { "id": "R1-F5", "round": 1, "severity": "HIGH", "title": "Dependencies were checked once, not at dispatch", "invariants": ["INV-L1", "INV-A1"], "disposition": "FIX", "closed_in": "PR-H", "note": "Every limit and dependency is re-read inside the dispatch transaction." },
-    { "id": "R1-F6", "round": 1, "severity": "HIGH", "title": "Dispatch was a sequence of autocommits, so two schedulers could both see room", "invariants": ["INV-R4", "INV-X4"], "disposition": "FIX", "closed_in": "PR-H" },
-    { "id": "R1-F7", "round": 1, "severity": "HIGH", "title": "Reconciliation could defeat itself and strand what leases cannot reach", "invariants": ["INV-S5", "INV-L5"], "disposition": "FIX", "closed_in": "PR-C" },
-    { "id": "R1-F8", "round": 1, "severity": "HIGH", "title": "An accepted report could move nothing and strand the task", "invariants": ["INV-S2", "INV-L3"], "disposition": "FIX", "closed_in": "PR-G" },
-    { "id": "R1-F9", "round": 1, "severity": "HIGH", "title": "Budget exhaustion parked a task with nothing the Founder could resolve", "invariants": ["INV-A1", "INV-S4"], "disposition": "FIX", "closed_in": "PR-F" },
-
-    { "id": "R2-F1", "round": 2, "severity": null, "title": "Migration 1 was hardened in place, leaving earlier databases unconstrained", "invariants": ["INV-M1"], "disposition": "FIX", "closed_in": "PR-A", "severity_note": "Round 2 severities are recorded in aggregate only; the durable record does not attribute a severity to each item." },
-    { "id": "R2-F2", "round": 2, "severity": null, "title": "An injected policy object was trusted without re-parsing", "invariants": ["INV-A1", "INV-R1"], "disposition": "FIX", "closed_in": "PR-A" },
-    { "id": "R2-F3", "round": 2, "severity": null, "title": "A task interrupted while waiting for CI could never be recovered", "invariants": ["INV-S4"], "disposition": "FIX", "closed_in": "PR-B" },
-    { "id": "R2-F4", "round": 2, "severity": null, "title": "Reconciliation read its eligibility outside the transaction that acted on it", "invariants": ["INV-L5", "INV-X4"], "disposition": "FIX", "closed_in": "PR-C" },
-    { "id": "R2-F5", "round": 2, "severity": null, "title": "A report naming another worker's id set that worker idle while it was busy", "invariants": ["INV-L3", "INV-L5"], "disposition": "FIX", "closed_in": "PR-G" },
-    { "id": "R2-F6", "round": 2, "severity": null, "title": "Two decision requests in one report raised two rows but one transition", "invariants": ["INV-A8", "INV-S4"], "disposition": "FIX", "closed_in": "PR-F" },
-    { "id": "R2-F7", "round": 2, "severity": null, "title": "Two resolvers could both write, the second overwriting the record of the first", "invariants": ["INV-X4", "INV-S6"], "disposition": "FIX", "closed_in": "PR-F" },
-    { "id": "R2-F8", "round": 2, "severity": null, "title": "A gated resource was checked after the already-held shortcut, and an inconsistent flag or category counted as ungated", "invariants": ["INV-R1"], "disposition": "FIX", "closed_in": "PR-H" },
-    { "id": "R2-F9", "round": 2, "severity": null, "title": "The no-transition backstop invented an infrastructure failure, hiding producer bugs", "invariants": ["INV-E6", "INV-S2"], "disposition": "FIX", "closed_in": "PR-G" },
-    { "id": "R2-F10", "round": 2, "severity": null, "title": "A dependency's required state was an unchecked string that could park downstream work forever", "invariants": ["INV-S1"], "disposition": "FIX", "closed_in": "PR-H" },
-
-    { "id": "R3-F1", "round": 3, "severity": "BLOCKER", "title": "Migration 2 could not upgrade a populated v1 database: defer_foreign_keys does not permit dropping a referenced parent", "invariants": ["INV-M2", "INV-M3"], "disposition": "FIX", "closed_in": "PR-A" },
-    { "id": "R3-F2", "round": 3, "severity": "BLOCKER", "title": "INFRA_FAILURE entered from FOUNDER_DECISION recovered to QUEUED, routing around the gate", "invariants": ["INV-S4", "INV-A1"], "disposition": "FIX", "closed_in": "PR-B" },
-    { "id": "R3-F3", "round": 3, "severity": "BLOCKER", "title": "With several decisions open only the last resolved target applied, and a cancelled decision still counted as resolved", "invariants": ["INV-A2", "INV-A8"], "disposition": "FIX", "closed_in": "PR-F" },
-    { "id": "R3-F4", "round": 3, "severity": "HIGH", "title": "Migration relabelled every unknown legacy gated resource as production_write", "invariants": ["INV-R2", "INV-A1"], "disposition": "FIX", "closed_in": "PR-A" },
-    { "id": "R3-F5", "round": 3, "severity": "HIGH", "title": "The validated policy object stayed mutable, so a gate could be opened at runtime", "invariants": ["INV-R1", "INV-A1"], "disposition": "FIX", "closed_in": "PR-A" },
-    { "id": "R3-F6", "round": 3, "severity": "HIGH", "title": "Worker-report authorisation happened outside the transaction that applied the report", "invariants": ["INV-L3", "INV-X4"], "disposition": "FIX", "closed_in": "PR-G" },
-
-    { "id": "R4-F1", "round": 4, "severity": "CRITICAL", "title": "An omitted outcome defaulted to APPROVED", "invariants": ["INV-A2"], "disposition": "FIX", "closed_in": "PR-F" },
-    { "id": "R4-F2", "round": 4, "severity": "CRITICAL", "title": "A legacy row recording only that a decision was RESOLVED migrated into an approval", "invariants": ["INV-R2", "INV-A2"], "disposition": "FIX", "closed_in": "PR-A" },
-    { "id": "R4-F3", "round": 4, "severity": "CRITICAL", "title": "A null outcome passed its own CHECK because IN against NULL evaluates to NULL", "invariants": ["INV-A2", "INV-S1"], "disposition": "FIX", "closed_in": "PR-A" },
-    { "id": "R4-F4", "round": 4, "severity": "HIGH", "title": "Version 2 was corrected in place after it had already been reviewed and applied", "invariants": ["INV-M1"], "disposition": "FIX", "closed_in": "PR-A" },
-    { "id": "R4-F5", "round": 4, "severity": "HIGH", "title": "An old answer decided new questions: continuation read every decision the task ever had", "invariants": ["INV-A7"], "disposition": "FIX", "closed_in": "PR-F" },
-    { "id": "R4-F6", "round": 4, "severity": "HIGH", "title": "A gate answered during an outage stranded its task with nothing left to answer", "invariants": ["INV-S4"], "disposition": "FIX", "closed_in": "PR-B" },
-    { "id": "R4-F7", "round": 4, "severity": "HIGH", "title": "An accepted report could contain a refused transition while its verdict persisted", "invariants": ["INV-X4", "INV-E4"], "disposition": "FIX", "closed_in": "PR-G" },
-    { "id": "R4-F8", "round": 4, "severity": "HIGH", "title": "A policy sync could turn a migrated legacy gate ungated", "invariants": ["INV-R1", "INV-R2"], "disposition": "FIX", "closed_in": "PR-H" },
-    { "id": "R4-F9", "round": 4, "severity": "HIGH", "title": "A lease past its TTL but ahead of the next tick was still authority", "invariants": ["INV-L5", "INV-L6"], "disposition": "FIX", "closed_in": "PR-C" },
-
-    { "id": "R5-F1", "round": 5, "severity": "CRITICAL", "title": "Merge authorisation was context-free: it applied with CI still pending, and survived a change of head", "invariants": ["INV-E2", "INV-A4", "INV-E7"], "disposition": "FIX", "closed_in": "PR-F", "note": "Closed by binding the authorization to (repository, base, head), invalidating it on any change, and requiring a passing CI observation for the current tuple." },
-    { "id": "R5-F2", "round": 5, "severity": "HIGH", "title": "Review cleanliness compared headSha only, so changing the base preserved an obsolete review", "invariants": ["INV-E7", "INV-E1"], "disposition": "FIX", "closed_in": "PR-D" },
-    { "id": "R5-F3", "round": 5, "severity": "HIGH", "title": "upsertResource could overwrite a gate unconditionally", "invariants": ["INV-R1"], "disposition": "FIX", "closed_in": "PR-H" },
-    { "id": "R5-F4", "round": 5, "severity": "HIGH", "title": "A heartbeat could revive an expired lease, bypassing the report-time expiry check", "invariants": ["INV-L6", "INV-L5"], "disposition": "FIX", "closed_in": "PR-C" },
-    { "id": "R5-F5", "round": 5, "severity": "HIGH", "title": "Creating a decision and transitioning to the gate were not one transaction, which could split the wait episode", "invariants": ["INV-X4", "INV-A7"], "disposition": "FIX", "closed_in": "PR-F" },
-    { "id": "R5-F6", "round": 5, "severity": "HIGH", "title": "Migration 3 conflated two different v2 shapes and would erase real refusal and cancellation audit", "invariants": ["INV-M1", "INV-R2"], "disposition": "FIX", "closed_in": "PR-A" },
-    { "id": "R5-F7", "round": 5, "severity": "HIGH", "title": "The lane active-PR limit omitted the gate and blocked states", "invariants": ["INV-R3"], "disposition": "FIX", "closed_in": "PR-H" },
-    { "id": "R5-F8", "round": 5, "severity": "MEDIUM", "title": "Documentation described a command that cannot work as written and a flag the implementation ignores", "invariants": ["INV-A2"], "disposition": "FIX", "closed_in": "PR-I", "note": "Closed by the documentation-conformance check: no documented command may fail when run as written." }
-  ],
-  "carried_debt": [
-    {
-      "id": "DEBT-1",
-      "title": "Four medium findings from rounds 1 and 2 whose individual text is not recoverable",
-      "invariants": ["INV-E1", "INV-S6"],
-      "disposition": "DEFER",
-      "owner": "Founder",
-      "target": "Phase 1A entry gate",
-      "note": "Round 1 counted three mediums and round 2 counted two against nine and ten itemised repairs respectively; four findings are therefore recorded only in aggregate. Their texts exist in no durable artifact, which is itself the defect: PR #1 never persisted review findings as immutable observations. The recurrence is closed by INV-E1 and INV-S6, which make every finding an append-only observation from PR-D onward. Whether the four must be recovered before Phase 1A is a Founder decision, not an engineering one."
-    },
-    {
-      "id": "DEBT-2",
-      "title": "Review and CI reports required registration but not lease possession",
-      "invariants": ["INV-L3", "INV-L5"],
-      "disposition": "DEFER",
-      "owner": "PR-G",
-      "target": "PR-G",
-      "note": "Recorded as a deliberate Phase-0 simplification when worker-report authorisation was made atomic. PR-G decides whether a review report must hold a claim, and its decision is recorded there."
-    },
-    {
-      "id": "DEBT-3",
-      "title": "The transitional /tmp Codex lock is not a durable global invariant",
-      "invariants": ["INV-P1", "INV-P2"],
-      "disposition": "ACCEPT",
-      "owner": "PR-0",
-      "target": "PR-C",
-      "note": "Accepted as an operational mechanism for the period before PR-C exists. It is a file on one host with no fencing, no expiry reconciliation and no in-flight accounting, and the specification does not claim it satisfies INV-P1 or INV-P2 (FE-6)."
-    }
+   {
+    "id": "PR0-R1-01",
+    "severity": "BLOCKER",
+    "gap": true,
+    "title": "No canonical task-state, event or transition vocabulary; deferred to PR-B",
+    "invariants": [
+     "INV-S1",
+     "INV-S2",
+     "INV-S3"
+    ],
+    "closed_by": "D15",
+    "closure": "spec/manifests/task-state.json defines nine states, three terminal, thirteen events and all 117 (state, event) pairs explicitly; spec/15-task-state.md is its prose."
+   },
+   {
+    "id": "PR0-R1-02",
+    "severity": "BLOCKER",
+    "gap": true,
+    "title": "Phase 0's only registered effect is not one of the closed action kinds",
+    "invariants": [
+     "INV-X1",
+     "INV-X2",
+     "INV-A3"
+    ],
+    "closed_by": "D16",
+    "closure": "worker_dispatch added as a seventh action kind; the matrix is 7 x 25 = 175 cells."
+   },
+   {
+    "id": "PR0-R1-03",
+    "severity": "BLOCKER",
+    "gap": true,
+    "title": "'Most recent observation' has no total ordering, no tie rule and no bound slot identity",
+    "invariants": [
+     "INV-E1",
+     "INV-E2"
+    ],
+    "closed_by": "D17",
+    "closure": "spec/manifests/evidence-model.json binds slot identity into the content digest, orders by trusted source generation, forbids observed_at and ingestion order as tie-breaks, and fails a conflicted slot closed."
+   },
+   {
+    "id": "PR0-R1-04",
+    "severity": "BLOCKER",
+    "gap": false,
+    "title": "G0-8 was satisfied by ABANDONED_BY_DECISION",
+    "invariants": [
+     "INV-S5",
+     "INV-X3"
+    ],
+    "closed_by": "D19",
+    "closure": "G0-8 now requires a definite truth and explicitly rejects UNKNOWN_PENDING_RECONCILIATION, ABANDONED_BY_DECISION, quarantined entries and effect_truth = UNKNOWN."
+   },
+   {
+    "id": "PR0-R1-05",
+    "severity": "BLOCKER",
+    "gap": false,
+    "title": "Findings validation had no frozen round set, count or ID set — empty arrays passed",
+    "invariants": [
+     "INV-S6",
+     "INV-E1"
+    ],
+    "closed_by": "D19",
+    "closure": "tools/spec/anchors.ts freezes the five rounds, the 42 finding IDs, the three debt IDs and the source head in code; the validator compares the manifest against the anchor."
+   },
+   {
+    "id": "PR0-R1-06",
+    "severity": "BLOCKER",
+    "gap": false,
+    "title": "Gate validation froze only two names and the D13/D14 tokens",
+    "invariants": [
+     "INV-R1"
+    ],
+    "closed_by": "D19",
+    "closure": "The anchor freezes G0-1..G0-11 and G1-1..G1-5 by ID, the G0-8 rejection set, the non-waivable flags and the decision requirements of each G1 condition."
+   },
+   {
+    "id": "PR0-R1-07",
+    "severity": "HIGH",
+    "gap": false,
+    "title": "The action matrix validated against declarations inside the manifest it was validating",
+    "invariants": [
+     "INV-A3",
+     "INV-A5"
+    ],
+    "closed_by": "D19",
+    "closure": "The anchor carries an independent copy of all 175 dispositions, the 17 always-required fields, every fixed value, the four dispositions, the group members and the group's applies_to."
+   },
+   {
+    "id": "PR0-R1-08",
+    "severity": "HIGH",
+    "gap": false,
+    "title": "Decision validation used the manifest's own legal_states and never checked the approved states",
+    "invariants": [
+     "INV-A2"
+    ],
+    "closed_by": "D19",
+    "closure": "The anchor freezes D1..D19 with their required states and the three standing NOT_AUTHORIZED records."
+   },
+   {
+    "id": "PR0-R1-09",
+    "severity": "HIGH",
+    "gap": false,
+    "title": "Invariant identity and the errata map were not frozen; FE-9 mapping claim and FE-3's omission of INV-A6 contradicted the manifest",
+    "invariants": [
+     "INV-A1"
+    ],
+    "closed_by": "D19",
+    "closure": "The anchor freezes all 47 IDs with their family, and the exact FE-to-invariant map. spec/12-errata.md now states that FE-1..FE-8 map to invariants and FE-9 is a documentation-status erratum, and FE-3's list includes INV-A6."
+   },
+   {
+    "id": "PR0-R1-10",
+    "severity": "HIGH",
+    "gap": false,
+    "title": "FE-2's all-or-nothing provenance group was carried by no named conformance test",
+    "invariants": [
+     "INV-A3"
+    ],
+    "closed_by": "D19",
+    "closure": "INV-A3 states the group constraint and names conf/A3/PR-F/provenance-group-none-or-whole and conf/A3/PR-F/isolated-head-base-or-pr-refused."
+   },
+   {
+    "id": "PR0-R1-11",
+    "severity": "HIGH",
+    "gap": false,
+    "title": "INV-A9 permitted weakening a gate that INV-R1 required to stand",
+    "invariants": [
+     "INV-A9",
+     "INV-R1"
+    ],
+    "closed_by": "D18",
+    "closure": "spec/manifests/non-waivable.json fixes the ten non-waivable subjects; unmarked is non-waivable; both phase gates carry waivable = false."
+   },
+   {
+    "id": "PR0-R1-12",
+    "severity": "HIGH",
+    "gap": false,
+    "title": "Triage mappings were not verified against the frozen source and several were semantically false",
+    "invariants": [
+     "INV-S6"
+    ],
+    "closed_by": "D19",
+    "closure": "Every row carries a mapping_basis. Rows whose obligation no invariant states are now slice_local with an owner slice and a named test, rather than force-mapped; the anchor freezes the source head and the 141/106/30/5 census."
+   },
+   {
+    "id": "PR0-R1-13",
+    "severity": "HIGH",
+    "gap": true,
+    "title": "The Phase 1A entry gate required only that D13 and D14 be 'decided'",
+    "invariants": [
+     "INV-A2",
+     "INV-R1"
+    ],
+    "closed_by": "D19",
+    "closure": "Each G1 condition names the decision, the required outcome, a content reference, a content version and consequence evaluation; the presence of a row satisfies nothing."
+   },
+   {
+    "id": "PR0-R1-14",
+    "severity": "HIGH",
+    "gap": false,
+    "title": "The runtime boundary guard recognised only static from and literal require",
+    "invariants": [
+     "INV-L1"
+    ],
+    "closed_by": "D19",
+    "closure": "The boundary is now a module-graph check: static imports, literal dynamic imports, computed dynamic imports, require with concatenation, and any non-literal specifier without an explicit allowlist all fail closed, with negative fixtures for each."
+   },
+   {
+    "id": "PR0-R1-15",
+    "severity": "MEDIUM",
+    "gap": true,
+    "title": "DEBT-2 delegated its own rule to PR-G and was not a testable obligation",
+    "invariants": [
+     "INV-L3",
+     "INV-L5"
+    ],
+    "closed_by": "D19",
+    "closure": "DEBT-2 now states the fail-closed rule, its owner and its exit condition, with two named tests."
+   },
+   {
+    "id": "PR0-R1-16",
+    "severity": "MEDIUM",
+    "gap": false,
+    "title": "INV-M3 claimed persistence n/a and put its tests in PR-A, which has no predecessor to upgrade",
+    "invariants": [
+     "INV-M3"
+    ],
+    "closed_by": "D19",
+    "closure": "Persistence and test ownership move to the migrating slices beginning with PR-C; PR-A owns the runner check only."
+   },
+   {
+    "id": "PR0-R1-17",
+    "severity": "MEDIUM",
+    "gap": false,
+    "title": "Lease prose still said a stale holder 'cannot act', contrary to FE-7",
+    "invariants": [
+     "INV-L7"
+    ],
+    "closed_by": "D19",
+    "closure": "spec/05-leases.md now says a stale holder cannot obtain a claim, cannot commit an authoritative result and has its results rejected — and states plainly that this does not stop a remote act already past the database boundary."
+   },
+   {
+    "id": "PR0-R1-18",
+    "severity": "MEDIUM",
+    "gap": false,
+    "title": "PR #1 ordering and fixture coverage were token-presence checks",
+    "invariants": [
+     "INV-S6"
+    ],
+    "closed_by": "D19",
+    "closure": "The ordering is a structured manifest checked against a code anchor, and the validator now executes every mutation fixture and asserts it provokes its declared code."
+   },
+   {
+    "id": "PR0-R1-19",
+    "severity": "MEDIUM",
+    "gap": false,
+    "title": "A missing document loaded as an empty string and malformed JSON threw uncoded",
+    "invariants": [
+     "INV-A1"
+    ],
+    "closed_by": "D19",
+    "closure": "Loading is fail-closed: a missing, empty or malformed required document or manifest becomes a coded problem."
+   },
+   {
+    "id": "PR0-R1-20",
+    "severity": "MEDIUM",
+    "gap": true,
+    "title": "'A bounded number of attempts' named no number and no policy key",
+    "invariants": [
+     "INV-E8"
+    ],
+    "closed_by": "D18",
+    "closure": "infrastructure.max_attempts_per_operation = 2 in spec/manifests/policy-parameters.json, with the retry precondition, concurrency rule, attempt identity and the UNKNOWN-effect exclusion."
+   },
+   {
+    "id": "PR0-R1-21",
+    "severity": "LOW",
+    "gap": false,
+    "title": "The fixture census in the commit message was wrong",
+    "invariants": [
+     "INV-S6"
+    ],
+    "closed_by": "D19",
+    "closure": "The reviewed head 88b7a77f carried 44 fixtures over 40 failure codes, not 44 over 41 as claimed and not 45 over 41 as reported. Both counts are now anchored in code and asserted."
+   },
+   {
+    "id": "PR0-R1-22",
+    "severity": "LOW",
+    "gap": false,
+    "title": "The docs-only boundary job would block PR-A from adding src/",
+    "invariants": [
+     "INV-R1"
+    ],
+    "closed_by": "D19",
+    "closure": "The boundary now applies only while the BASE commit does not yet contain the PR-0 completion marker. A PR cannot exempt itself, because the marker is read from the base, never from the head."
+   }
   ]
+ }
 }

@@ -1,43 +1,122 @@
 {
-  "manifest_version": 1,
-  "note": "Two separate gates. Satisfying one never satisfies the other (INV-R1). The Phase 0 completion gate does not require D13 or D14; both are conditions of the Phase 1A entry gate (FE-8).",
-  "gates": [
+ "manifest_version": 1,
+ "note": "Two separate gates, both non-waivable (D18). Satisfying one never satisfies the other (INV-R1). The Phase 0 completion gate does not require D13 or D14; both are conditions of the Phase 1A entry gate (FE-8), and each is satisfied only by an approved resolution with content and version, never by the presence of a row.",
+ "gates": [
+  {
+   "id": "phase0_completion",
+   "title": "Phase 0 completion gate",
+   "evaluates": "Whether PR-0 and PR-A through PR-I are complete.",
+   "excluded_conditions": [
+    "Real integrations are not required; they remain closed.",
+    "A completed Phase 1A specification is not required.",
+    "D13 does not block this gate.",
+    "D14 does not block this gate."
+   ],
+   "conditions": [
     {
-      "id": "phase0_completion",
-      "title": "Phase 0 completion gate",
-      "evaluates": "Whether PR-0 and PR-A through PR-I are complete.",
-      "excluded_conditions": [
-        "Real integrations are not required; they remain closed.",
-        "A completed Phase 1A specification is not required.",
-        "D13 does not block this gate.",
-        "D14 does not block this gate."
-      ],
-      "conditions": [
-        { "id": "G0-1", "text": "PR-0 and PR-A through PR-I are merged to origin/main in that order." },
-        { "id": "G0-2", "text": "All 47 invariants have at least one passing conformance test and at least one negative test each." },
-        { "id": "G0-3", "text": "The specification validator passes: no invariant lacks a family, four owners or a named test; the census equals the manifest length." },
-        { "id": "G0-4", "text": "Every Round 1 to Round 5 finding and every carried debt item is closed against its invariant, or explicitly deferred by a recorded decision." },
-        { "id": "G0-5", "text": "Every medium and low raised in any slice carries a recorded FIX, ACCEPT or DEFER. None is undispositioned." },
-        { "id": "G0-6", "text": "The migration chain upgrades a populated v1 database through v2 to v7 with all rows, references and provenance preserved, verified at each step." },
-        { "id": "G0-7", "text": "No slice carries an open blocker or high, judged as the tuple aggregate of R4." },
-        { "id": "G0-8", "text": "No effect-journal entry is in a non-terminal state, and no entry closed by decision is counted as a success." },
-        { "id": "G0-9", "text": "The documentation-conformance check passes: no documented guarantee lacks a test, no documented command fails when run as written." },
-        { "id": "G0-10", "text": "Auto-merge, self-hosting and every real integration remain disabled, verified by test." },
-        { "id": "G0-11", "text": "The deployment note records the D3 single authority domain constraint." }
-      ]
+     "id": "G0-1",
+     "text": "PR-0 and PR-A through PR-I are merged to origin/main in that order."
     },
     {
-      "id": "phase1a_entry",
-      "title": "Phase 1A entry gate",
-      "evaluates": "Whether real provider implementation may begin.",
-      "conditions": [
-        { "id": "G1-1", "text": "The Phase 0 completion gate is satisfied." },
-        { "id": "G1-2", "text": "D13 is decided." },
-        { "id": "G1-3", "text": "D14 is decided." },
-        { "id": "G1-4", "text": "The provider lifecycle specification is approved in writing, in whichever slice D14 selects." },
-        { "id": "G1-5", "text": "The Founder separately authorises Phase 1A." }
-      ],
-      "prohibition": "Until every condition holds, no real adapter implementation may begin. The absence of a decision is not permission (INV-A1)."
+     "id": "G0-2",
+     "text": "All 47 invariants have at least one passing conformance test and at least one negative test each."
+    },
+    {
+     "id": "G0-3",
+     "text": "The specification validator passes: no invariant lacks a family, four owners or a named test; the census equals the manifest length."
+    },
+    {
+     "id": "G0-4",
+     "text": "Every Round 1 to Round 5 finding and every carried debt item is closed against its invariant, or explicitly deferred by a recorded decision."
+    },
+    {
+     "id": "G0-5",
+     "text": "Every medium and low raised in any slice carries a recorded FIX, ACCEPT or DEFER. None is undispositioned."
+    },
+    {
+     "id": "G0-6",
+     "text": "The migration chain upgrades a populated v1 database through v2 to v7 with all rows, references and provenance preserved, verified at each step."
+    },
+    {
+     "id": "G0-7",
+     "text": "No slice carries an open blocker or high, judged as the tuple aggregate of R4."
+    },
+    {
+     "id": "G0-8",
+     "text": "Every effect-journal entry has a definite truth. No entry is in a non-terminal state, in particular none is UNKNOWN_PENDING_RECONCILIATION; and no entry is ABANDONED_BY_DECISION, quarantined, or carrying effect_truth = UNKNOWN. An abandoned entry satisfies this condition only after its named remediation has produced a definite outcome.",
+     "rejects": [
+      "UNKNOWN_PENDING_RECONCILIATION",
+      "ABANDONED_BY_DECISION",
+      "effect_truth=UNKNOWN",
+      "quarantined"
+     ]
+    },
+    {
+     "id": "G0-9",
+     "text": "The documentation-conformance check passes: no documented guarantee lacks a test, no documented command fails when run as written."
+    },
+    {
+     "id": "G0-10",
+     "text": "Auto-merge, self-hosting and every real integration remain disabled, verified by test."
+    },
+    {
+     "id": "G0-11",
+     "text": "The deployment note records the D3 single authority domain constraint."
     }
-  ]
+   ],
+   "waivable": false
+  },
+  {
+   "id": "phase1a_entry",
+   "title": "Phase 1A entry gate",
+   "evaluates": "Whether real provider implementation may begin.",
+   "conditions": [
+    {
+     "id": "G1-1",
+     "text": "The Phase 0 completion gate is satisfied.",
+     "requires_decision": null
+    },
+    {
+     "id": "G1-2",
+     "text": "D13 carries a resolution with outcome APPROVED, a content reference and a content version, and the consequence of that outcome holds: if D13 says medium and low debt blocks Phase 1A, then no such debt remains open.",
+     "requires_decision": {
+      "decision_id": "D13",
+      "outcome": "APPROVED",
+      "requires_content_ref": true,
+      "requires_content_version": true,
+      "evaluate_consequence": true
+     }
+    },
+    {
+     "id": "G1-3",
+     "text": "D14 carries a resolution with outcome APPROVED naming the exact specification slice that holds the provider lifecycle, and its content version.",
+     "requires_decision": {
+      "decision_id": "D14",
+      "outcome": "APPROVED",
+      "requires_content_ref": true,
+      "requires_content_version": true,
+      "evaluate_consequence": true
+     }
+    },
+    {
+     "id": "G1-4",
+     "text": "The provider lifecycle specification is approved in writing at exactly the location and version D14's resolution names.",
+     "requires_decision": {
+      "decision_id": "D14",
+      "outcome": "APPROVED",
+      "requires_content_ref": true,
+      "requires_content_version": true,
+      "evaluate_consequence": true
+     }
+    },
+    {
+     "id": "G1-5",
+     "text": "The Founder separately authorises Phase 1A.",
+     "requires_decision": null
+    }
+   ],
+   "prohibition": "Until every condition holds, no real adapter implementation may begin. The existence of a decision row is not a decision: a condition naming a decision is satisfied only by an APPROVED resolution with a content reference and a content version, whose consequence has been evaluated. The absence of a decision is not permission (INV-A1).",
+   "waivable": false
+  }
+ ]
 }

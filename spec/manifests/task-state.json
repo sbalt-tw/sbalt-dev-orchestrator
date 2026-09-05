@@ -1,0 +1,861 @@
+{
+ "manifest_version": 1,
+ "authority": "D15",
+ "states": [
+  "PENDING",
+  "READY",
+  "DISPATCHING",
+  "RUNNING",
+  "WAITING",
+  "BLOCKED",
+  "SUCCEEDED",
+  "FAILED",
+  "CANCELLED"
+ ],
+ "terminal_states": [
+  "SUCCEEDED",
+  "FAILED",
+  "CANCELLED"
+ ],
+ "initial_state": "PENDING",
+ "obligations": {
+  "WAITING": [
+   "EVIDENCE",
+   "FOUNDER_DECISION",
+   "EFFECT_RECONCILIATION"
+  ],
+  "BLOCKED": [
+   "INFRASTRUCTURE",
+   "POLICY",
+   "AUTHORITY_LOST",
+   "DEPENDENCY_FAILED"
+  ]
+ },
+ "obligation_model": {
+  "two_layer": "Task state records lifecycle. Every waiting or blocking reason is a separately persisted obligation row; the state label is derived from the open obligations and never overwrites them.",
+  "multiplicity": "A task may hold several obligations at once. Resolving one never clears another.",
+  "derivation": "BLOCKED while any blocker obligation is open; otherwise WAITING while any waiting obligation is open; otherwise the lifecycle state stands.",
+  "append_only": "Opening and resolving an obligation are append-only events. A resolved obligation is never deleted."
+ },
+ "events": [
+  {
+   "name": "TASK_CREATED",
+   "covers": "task creation"
+  },
+  {
+   "name": "DEPENDENCIES_SATISFIED",
+   "covers": "dependency satisfaction"
+  },
+  {
+   "name": "DISPATCH_INTENT_RECORDED",
+   "covers": "dispatch intent"
+  },
+  {
+   "name": "DISPATCH_CONFIRMED",
+   "covers": "dispatch success"
+  },
+  {
+   "name": "DISPATCH_AMBIGUOUS",
+   "covers": "dispatch ambiguity"
+  },
+  {
+   "name": "WORKER_REPORT_ACCEPTED",
+   "covers": "worker report"
+  },
+  {
+   "name": "OBLIGATION_OPENED",
+   "covers": "obligation open"
+  },
+  {
+   "name": "OBLIGATION_RESOLVED",
+   "covers": "obligation resolve"
+  },
+  {
+   "name": "BLOCKER_OPENED",
+   "covers": "blocker open"
+  },
+  {
+   "name": "BLOCKER_RESOLVED",
+   "covers": "blocker resolve"
+  },
+  {
+   "name": "DEFINITIVE_SUCCESS",
+   "covers": "definitive success"
+  },
+  {
+   "name": "DEFINITIVE_FAILURE",
+   "covers": "definitive failure"
+  },
+  {
+   "name": "CANCELLATION_AUTHENTICATED",
+   "covers": "authenticated cancellation"
+  }
+ ],
+ "caller_contract": {
+  "submits": [
+   "event",
+   "assertion"
+  ],
+  "never_submits": [
+   "target state"
+  ],
+  "rule": "A caller submits an event and may assert what it believes to be true. The target state is resolved from persisted facts. An assertion that contradicts persisted facts is refused, not obeyed."
+ },
+ "refusals_are_recorded": "Every refused transition is written to the append-only history with its event, its source state and its refusal reason.",
+ "no_wildcards": "There is no wildcard, catch-all or default transition. Every (state, event) pair below carries an explicit ALLOWED or REFUSED decision.",
+ "success_preconditions": [
+  "No obligation of any kind is open.",
+  "No blocking review finding on the current tuple is unresolved.",
+  "CI is recorded as passed for the exact current (repository, base, head) tuple, from the recomputed current evidence snapshot.",
+  "The acting principal holds a valid, unexpired lease for the task.",
+  "No effect-journal entry for this task is in UNKNOWN_PENDING_RECONCILIATION.",
+  "No effect-journal entry for this task is ABANDONED_BY_DECISION."
+ ],
+ "abandonment_rules": [
+  "ABANDONED_BY_DECISION never releases a task from any obligation.",
+  "ABANDONED_BY_DECISION never satisfies a dependency for another task.",
+  "ABANDONED_BY_DECISION never satisfies the Phase 0 completion gate condition G0-8."
+ ],
+ "redo_rule": "A terminal task is never revived. Repeating the work means creating a new task or a new attempt, with its own identity and its own history.",
+ "census": {
+  "states": 9,
+  "terminal_states": 3,
+  "events": 13,
+  "pairs": 117,
+  "allowed": 29,
+  "refused": 88
+ },
+ "transitions": [
+  {
+   "event": "TASK_CREATED",
+   "from": "PENDING",
+   "decision": "REFUSED",
+   "reason": "a task already exists in this state; creation is only the initial transition"
+  },
+  {
+   "event": "TASK_CREATED",
+   "from": "READY",
+   "decision": "REFUSED",
+   "reason": "a task already exists in this state; creation is only the initial transition"
+  },
+  {
+   "event": "TASK_CREATED",
+   "from": "DISPATCHING",
+   "decision": "REFUSED",
+   "reason": "a task already exists in this state; creation is only the initial transition"
+  },
+  {
+   "event": "TASK_CREATED",
+   "from": "RUNNING",
+   "decision": "REFUSED",
+   "reason": "a task already exists in this state; creation is only the initial transition"
+  },
+  {
+   "event": "TASK_CREATED",
+   "from": "WAITING",
+   "decision": "REFUSED",
+   "reason": "a task already exists in this state; creation is only the initial transition"
+  },
+  {
+   "event": "TASK_CREATED",
+   "from": "BLOCKED",
+   "decision": "REFUSED",
+   "reason": "a task already exists in this state; creation is only the initial transition"
+  },
+  {
+   "event": "TASK_CREATED",
+   "from": "SUCCEEDED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "TASK_CREATED",
+   "from": "FAILED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "TASK_CREATED",
+   "from": "CANCELLED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DEPENDENCIES_SATISFIED",
+   "from": "PENDING",
+   "decision": "ALLOWED",
+   "target_rule": "READY",
+   "note": "Every declared dependency is satisfied on persisted rows; the caller may assert this but the graph decides."
+  },
+  {
+   "event": "DEPENDENCIES_SATISFIED",
+   "from": "READY",
+   "decision": "REFUSED",
+   "reason": "dependencies are evaluated only while the task is PENDING"
+  },
+  {
+   "event": "DEPENDENCIES_SATISFIED",
+   "from": "DISPATCHING",
+   "decision": "REFUSED",
+   "reason": "dependencies are evaluated only while the task is PENDING"
+  },
+  {
+   "event": "DEPENDENCIES_SATISFIED",
+   "from": "RUNNING",
+   "decision": "REFUSED",
+   "reason": "dependencies are evaluated only while the task is PENDING"
+  },
+  {
+   "event": "DEPENDENCIES_SATISFIED",
+   "from": "WAITING",
+   "decision": "REFUSED",
+   "reason": "dependencies are evaluated only while the task is PENDING"
+  },
+  {
+   "event": "DEPENDENCIES_SATISFIED",
+   "from": "BLOCKED",
+   "decision": "REFUSED",
+   "reason": "dependencies are evaluated only while the task is PENDING"
+  },
+  {
+   "event": "DEPENDENCIES_SATISFIED",
+   "from": "SUCCEEDED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DEPENDENCIES_SATISFIED",
+   "from": "FAILED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DEPENDENCIES_SATISFIED",
+   "from": "CANCELLED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DISPATCH_INTENT_RECORDED",
+   "from": "PENDING",
+   "decision": "REFUSED",
+   "reason": "only a READY task may be dispatched"
+  },
+  {
+   "event": "DISPATCH_INTENT_RECORDED",
+   "from": "READY",
+   "decision": "ALLOWED",
+   "target_rule": "DISPATCHING",
+   "note": "A redemption of a worker_dispatch authorization has committed its INTENT."
+  },
+  {
+   "event": "DISPATCH_INTENT_RECORDED",
+   "from": "DISPATCHING",
+   "decision": "REFUSED",
+   "reason": "only a READY task may be dispatched"
+  },
+  {
+   "event": "DISPATCH_INTENT_RECORDED",
+   "from": "RUNNING",
+   "decision": "REFUSED",
+   "reason": "only a READY task may be dispatched"
+  },
+  {
+   "event": "DISPATCH_INTENT_RECORDED",
+   "from": "WAITING",
+   "decision": "REFUSED",
+   "reason": "only a READY task may be dispatched"
+  },
+  {
+   "event": "DISPATCH_INTENT_RECORDED",
+   "from": "BLOCKED",
+   "decision": "REFUSED",
+   "reason": "only a READY task may be dispatched"
+  },
+  {
+   "event": "DISPATCH_INTENT_RECORDED",
+   "from": "SUCCEEDED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DISPATCH_INTENT_RECORDED",
+   "from": "FAILED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DISPATCH_INTENT_RECORDED",
+   "from": "CANCELLED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DISPATCH_CONFIRMED",
+   "from": "PENDING",
+   "decision": "REFUSED",
+   "reason": "only a task with a recorded dispatch intent may be confirmed"
+  },
+  {
+   "event": "DISPATCH_CONFIRMED",
+   "from": "READY",
+   "decision": "REFUSED",
+   "reason": "only a task with a recorded dispatch intent may be confirmed"
+  },
+  {
+   "event": "DISPATCH_CONFIRMED",
+   "from": "DISPATCHING",
+   "decision": "ALLOWED",
+   "target_rule": "RUNNING",
+   "note": "The provider confirmed the worker started, under the redemption key."
+  },
+  {
+   "event": "DISPATCH_CONFIRMED",
+   "from": "RUNNING",
+   "decision": "REFUSED",
+   "reason": "only a task with a recorded dispatch intent may be confirmed"
+  },
+  {
+   "event": "DISPATCH_CONFIRMED",
+   "from": "WAITING",
+   "decision": "REFUSED",
+   "reason": "only a task with a recorded dispatch intent may be confirmed"
+  },
+  {
+   "event": "DISPATCH_CONFIRMED",
+   "from": "BLOCKED",
+   "decision": "REFUSED",
+   "reason": "only a task with a recorded dispatch intent may be confirmed"
+  },
+  {
+   "event": "DISPATCH_CONFIRMED",
+   "from": "SUCCEEDED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DISPATCH_CONFIRMED",
+   "from": "FAILED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DISPATCH_CONFIRMED",
+   "from": "CANCELLED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DISPATCH_AMBIGUOUS",
+   "from": "PENDING",
+   "decision": "REFUSED",
+   "reason": "only a task with a recorded dispatch intent can have an ambiguous dispatch"
+  },
+  {
+   "event": "DISPATCH_AMBIGUOUS",
+   "from": "READY",
+   "decision": "REFUSED",
+   "reason": "only a task with a recorded dispatch intent can have an ambiguous dispatch"
+  },
+  {
+   "event": "DISPATCH_AMBIGUOUS",
+   "from": "DISPATCHING",
+   "decision": "ALLOWED",
+   "target_rule": "WAITING",
+   "note": "Opens an EFFECT_RECONCILIATION obligation. The dispatch is never recorded as failed on ambiguity."
+  },
+  {
+   "event": "DISPATCH_AMBIGUOUS",
+   "from": "RUNNING",
+   "decision": "REFUSED",
+   "reason": "only a task with a recorded dispatch intent can have an ambiguous dispatch"
+  },
+  {
+   "event": "DISPATCH_AMBIGUOUS",
+   "from": "WAITING",
+   "decision": "REFUSED",
+   "reason": "only a task with a recorded dispatch intent can have an ambiguous dispatch"
+  },
+  {
+   "event": "DISPATCH_AMBIGUOUS",
+   "from": "BLOCKED",
+   "decision": "REFUSED",
+   "reason": "only a task with a recorded dispatch intent can have an ambiguous dispatch"
+  },
+  {
+   "event": "DISPATCH_AMBIGUOUS",
+   "from": "SUCCEEDED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DISPATCH_AMBIGUOUS",
+   "from": "FAILED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DISPATCH_AMBIGUOUS",
+   "from": "CANCELLED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "WORKER_REPORT_ACCEPTED",
+   "from": "PENDING",
+   "decision": "REFUSED",
+   "reason": "a report is accepted only from the worker running the task"
+  },
+  {
+   "event": "WORKER_REPORT_ACCEPTED",
+   "from": "READY",
+   "decision": "REFUSED",
+   "reason": "a report is accepted only from the worker running the task"
+  },
+  {
+   "event": "WORKER_REPORT_ACCEPTED",
+   "from": "DISPATCHING",
+   "decision": "REFUSED",
+   "reason": "a report is accepted only from the worker running the task"
+  },
+  {
+   "event": "WORKER_REPORT_ACCEPTED",
+   "from": "RUNNING",
+   "decision": "ALLOWED",
+   "target_rule": "RUNNING",
+   "note": "An accepted report is recorded; it never moves the task by itself. State changes come from the specific events."
+  },
+  {
+   "event": "WORKER_REPORT_ACCEPTED",
+   "from": "WAITING",
+   "decision": "REFUSED",
+   "reason": "a report is accepted only from the worker running the task"
+  },
+  {
+   "event": "WORKER_REPORT_ACCEPTED",
+   "from": "BLOCKED",
+   "decision": "REFUSED",
+   "reason": "a report is accepted only from the worker running the task"
+  },
+  {
+   "event": "WORKER_REPORT_ACCEPTED",
+   "from": "SUCCEEDED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "WORKER_REPORT_ACCEPTED",
+   "from": "FAILED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "WORKER_REPORT_ACCEPTED",
+   "from": "CANCELLED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "OBLIGATION_OPENED",
+   "from": "PENDING",
+   "decision": "REFUSED",
+   "reason": "an obligation cannot be opened before the task is schedulable or after it is terminal"
+  },
+  {
+   "event": "OBLIGATION_OPENED",
+   "from": "READY",
+   "decision": "ALLOWED",
+   "target_rule": "computed: BLOCKED while any blocker obligation is open; else WAITING while any waiting obligation is open; else READY",
+   "note": "A waiting obligation is opened."
+  },
+  {
+   "event": "OBLIGATION_OPENED",
+   "from": "DISPATCHING",
+   "decision": "ALLOWED",
+   "target_rule": "computed: BLOCKED while any blocker obligation is open; else WAITING while any waiting obligation is open; else READY",
+   "note": "A waiting obligation is opened."
+  },
+  {
+   "event": "OBLIGATION_OPENED",
+   "from": "RUNNING",
+   "decision": "ALLOWED",
+   "target_rule": "computed: BLOCKED while any blocker obligation is open; else WAITING while any waiting obligation is open; else READY",
+   "note": "A waiting obligation is opened."
+  },
+  {
+   "event": "OBLIGATION_OPENED",
+   "from": "WAITING",
+   "decision": "ALLOWED",
+   "target_rule": "computed: BLOCKED while any blocker obligation is open; else WAITING while any waiting obligation is open; else READY",
+   "note": "A second obligation is opened; the first is untouched."
+  },
+  {
+   "event": "OBLIGATION_OPENED",
+   "from": "BLOCKED",
+   "decision": "ALLOWED",
+   "target_rule": "computed: BLOCKED while any blocker obligation is open; else WAITING while any waiting obligation is open; else READY",
+   "note": "A waiting obligation is opened while a blocker is also open; the task stays BLOCKED."
+  },
+  {
+   "event": "OBLIGATION_OPENED",
+   "from": "SUCCEEDED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "OBLIGATION_OPENED",
+   "from": "FAILED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "OBLIGATION_OPENED",
+   "from": "CANCELLED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "OBLIGATION_RESOLVED",
+   "from": "PENDING",
+   "decision": "REFUSED",
+   "reason": "there is no open obligation to resolve in this state"
+  },
+  {
+   "event": "OBLIGATION_RESOLVED",
+   "from": "READY",
+   "decision": "REFUSED",
+   "reason": "there is no open obligation to resolve in this state"
+  },
+  {
+   "event": "OBLIGATION_RESOLVED",
+   "from": "DISPATCHING",
+   "decision": "REFUSED",
+   "reason": "there is no open obligation to resolve in this state"
+  },
+  {
+   "event": "OBLIGATION_RESOLVED",
+   "from": "RUNNING",
+   "decision": "REFUSED",
+   "reason": "there is no open obligation to resolve in this state"
+  },
+  {
+   "event": "OBLIGATION_RESOLVED",
+   "from": "WAITING",
+   "decision": "ALLOWED",
+   "target_rule": "computed: BLOCKED while any blocker obligation is open; else WAITING while any waiting obligation is open; else READY",
+   "note": "Resolving one obligation never clears another."
+  },
+  {
+   "event": "OBLIGATION_RESOLVED",
+   "from": "BLOCKED",
+   "decision": "ALLOWED",
+   "target_rule": "computed: BLOCKED while any blocker obligation is open; else WAITING while any waiting obligation is open; else READY",
+   "note": "Resolving a waiting obligation never clears a blocker."
+  },
+  {
+   "event": "OBLIGATION_RESOLVED",
+   "from": "SUCCEEDED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "OBLIGATION_RESOLVED",
+   "from": "FAILED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "OBLIGATION_RESOLVED",
+   "from": "CANCELLED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "BLOCKER_OPENED",
+   "from": "PENDING",
+   "decision": "REFUSED",
+   "reason": "a blocker cannot be opened before the task is schedulable or after it is terminal"
+  },
+  {
+   "event": "BLOCKER_OPENED",
+   "from": "READY",
+   "decision": "ALLOWED",
+   "target_rule": "BLOCKED",
+   "note": "A blocking obligation is opened."
+  },
+  {
+   "event": "BLOCKER_OPENED",
+   "from": "DISPATCHING",
+   "decision": "ALLOWED",
+   "target_rule": "BLOCKED",
+   "note": "A blocking obligation is opened."
+  },
+  {
+   "event": "BLOCKER_OPENED",
+   "from": "RUNNING",
+   "decision": "ALLOWED",
+   "target_rule": "BLOCKED",
+   "note": "A blocking obligation is opened."
+  },
+  {
+   "event": "BLOCKER_OPENED",
+   "from": "WAITING",
+   "decision": "ALLOWED",
+   "target_rule": "BLOCKED",
+   "note": "A blocker outranks a waiting obligation for the purpose of the state label; the waiting obligation stays open."
+  },
+  {
+   "event": "BLOCKER_OPENED",
+   "from": "BLOCKED",
+   "decision": "ALLOWED",
+   "target_rule": "BLOCKED",
+   "note": "A second blocker is opened; the first is untouched."
+  },
+  {
+   "event": "BLOCKER_OPENED",
+   "from": "SUCCEEDED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "BLOCKER_OPENED",
+   "from": "FAILED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "BLOCKER_OPENED",
+   "from": "CANCELLED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "BLOCKER_RESOLVED",
+   "from": "PENDING",
+   "decision": "REFUSED",
+   "reason": "there is no open blocker to resolve in this state"
+  },
+  {
+   "event": "BLOCKER_RESOLVED",
+   "from": "READY",
+   "decision": "REFUSED",
+   "reason": "there is no open blocker to resolve in this state"
+  },
+  {
+   "event": "BLOCKER_RESOLVED",
+   "from": "DISPATCHING",
+   "decision": "REFUSED",
+   "reason": "there is no open blocker to resolve in this state"
+  },
+  {
+   "event": "BLOCKER_RESOLVED",
+   "from": "RUNNING",
+   "decision": "REFUSED",
+   "reason": "there is no open blocker to resolve in this state"
+  },
+  {
+   "event": "BLOCKER_RESOLVED",
+   "from": "WAITING",
+   "decision": "REFUSED",
+   "reason": "there is no open blocker to resolve in this state"
+  },
+  {
+   "event": "BLOCKER_RESOLVED",
+   "from": "BLOCKED",
+   "decision": "ALLOWED",
+   "target_rule": "computed: BLOCKED while any blocker obligation is open; else WAITING while any waiting obligation is open; else READY",
+   "note": "Resolving one blocker never clears another blocker or any waiting obligation."
+  },
+  {
+   "event": "BLOCKER_RESOLVED",
+   "from": "SUCCEEDED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "BLOCKER_RESOLVED",
+   "from": "FAILED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "BLOCKER_RESOLVED",
+   "from": "CANCELLED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DEFINITIVE_SUCCESS",
+   "from": "PENDING",
+   "decision": "REFUSED",
+   "reason": "success is reachable only from RUNNING, and only when every success precondition holds"
+  },
+  {
+   "event": "DEFINITIVE_SUCCESS",
+   "from": "READY",
+   "decision": "REFUSED",
+   "reason": "success is reachable only from RUNNING, and only when every success precondition holds"
+  },
+  {
+   "event": "DEFINITIVE_SUCCESS",
+   "from": "DISPATCHING",
+   "decision": "REFUSED",
+   "reason": "success is reachable only from RUNNING, and only when every success precondition holds"
+  },
+  {
+   "event": "DEFINITIVE_SUCCESS",
+   "from": "RUNNING",
+   "decision": "ALLOWED",
+   "target_rule": "SUCCEEDED",
+   "note": "Permitted only when every success precondition holds; see success_preconditions."
+  },
+  {
+   "event": "DEFINITIVE_SUCCESS",
+   "from": "WAITING",
+   "decision": "REFUSED",
+   "reason": "success is reachable only from RUNNING, and only when every success precondition holds"
+  },
+  {
+   "event": "DEFINITIVE_SUCCESS",
+   "from": "BLOCKED",
+   "decision": "REFUSED",
+   "reason": "success is reachable only from RUNNING, and only when every success precondition holds"
+  },
+  {
+   "event": "DEFINITIVE_SUCCESS",
+   "from": "SUCCEEDED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DEFINITIVE_SUCCESS",
+   "from": "FAILED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DEFINITIVE_SUCCESS",
+   "from": "CANCELLED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DEFINITIVE_FAILURE",
+   "from": "PENDING",
+   "decision": "REFUSED",
+   "reason": "a task that has not started, or that is already terminal, cannot definitively fail"
+  },
+  {
+   "event": "DEFINITIVE_FAILURE",
+   "from": "READY",
+   "decision": "REFUSED",
+   "reason": "a task that has not started, or that is already terminal, cannot definitively fail"
+  },
+  {
+   "event": "DEFINITIVE_FAILURE",
+   "from": "DISPATCHING",
+   "decision": "ALLOWED",
+   "target_rule": "FAILED",
+   "note": "A definitive, provider-attested failure."
+  },
+  {
+   "event": "DEFINITIVE_FAILURE",
+   "from": "RUNNING",
+   "decision": "ALLOWED",
+   "target_rule": "FAILED",
+   "note": "A definitive, provider-attested failure."
+  },
+  {
+   "event": "DEFINITIVE_FAILURE",
+   "from": "WAITING",
+   "decision": "ALLOWED",
+   "target_rule": "FAILED",
+   "note": "A definitive failure recorded while an obligation is open."
+  },
+  {
+   "event": "DEFINITIVE_FAILURE",
+   "from": "BLOCKED",
+   "decision": "ALLOWED",
+   "target_rule": "FAILED",
+   "note": "A definitive failure recorded while a blocker is open."
+  },
+  {
+   "event": "DEFINITIVE_FAILURE",
+   "from": "SUCCEEDED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DEFINITIVE_FAILURE",
+   "from": "FAILED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "DEFINITIVE_FAILURE",
+   "from": "CANCELLED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "CANCELLATION_AUTHENTICATED",
+   "from": "PENDING",
+   "decision": "ALLOWED",
+   "target_rule": "CANCELLED",
+   "note": "Cancellation by an authenticated principal holding the authority to cancel."
+  },
+  {
+   "event": "CANCELLATION_AUTHENTICATED",
+   "from": "READY",
+   "decision": "ALLOWED",
+   "target_rule": "CANCELLED",
+   "note": "Cancellation by an authenticated principal holding the authority to cancel."
+  },
+  {
+   "event": "CANCELLATION_AUTHENTICATED",
+   "from": "DISPATCHING",
+   "decision": "ALLOWED",
+   "target_rule": "CANCELLED",
+   "note": "Cancellation by an authenticated principal holding the authority to cancel."
+  },
+  {
+   "event": "CANCELLATION_AUTHENTICATED",
+   "from": "RUNNING",
+   "decision": "ALLOWED",
+   "target_rule": "CANCELLED",
+   "note": "Cancellation by an authenticated principal holding the authority to cancel."
+  },
+  {
+   "event": "CANCELLATION_AUTHENTICATED",
+   "from": "WAITING",
+   "decision": "ALLOWED",
+   "target_rule": "CANCELLED",
+   "note": "Cancellation by an authenticated principal holding the authority to cancel."
+  },
+  {
+   "event": "CANCELLATION_AUTHENTICATED",
+   "from": "BLOCKED",
+   "decision": "ALLOWED",
+   "target_rule": "CANCELLED",
+   "note": "Cancellation by an authenticated principal holding the authority to cancel."
+  },
+  {
+   "event": "CANCELLATION_AUTHENTICATED",
+   "from": "SUCCEEDED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "CANCELLATION_AUTHENTICATED",
+   "from": "FAILED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  },
+  {
+   "event": "CANCELLATION_AUTHENTICATED",
+   "from": "CANCELLED",
+   "decision": "REFUSED",
+   "reason": "a terminal state has no outgoing transition"
+  }
+ ]
+}

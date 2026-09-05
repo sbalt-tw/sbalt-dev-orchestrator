@@ -22,7 +22,7 @@ severity words and severity never borrows risk words.
 | R6 | Codex reviews the complete diff and may raise findings outside the ledger. A finding naming a rule the specification lacks is a **specification gap**: the slice stops and returns to the Founder. It is never patched inside a round. |
 | R7 | Budget exhausted with a blocker or high outstanding is a hard stop returning to the Founder. |
 | R8 | Blocking findings are durable against their tuple; a later clean verdict on the same tuple resolves nothing. Only a new tuple or a named `waive_finding` resolves one. |
-| R9 | Infrastructure aborts consume no round, are classified only by a trusted terminal result, and escalate as an infrastructure condition after a bounded number of attempts. |
+| R9 | Infrastructure aborts consume no round and are classified only by a trusted terminal result. One exact operation on one exact tuple gets **two attempts** — the first plus at most one retry, never concurrent, each with its own attempt identity — under the named key `infrastructure.max_attempts_per_operation`. Before a third attempt the task becomes `BLOCKED` with an `INFRASTRUCTURE` obligation and returns to the Founder. See [16-non-waivable.md](16-non-waivable.md). |
 | R10 | Reviewer capacity is 1 per authority domain, claimed by the algorithm in [05-leases.md](05-leases.md) and measured in in-flight invocations. |
 | R11 | The conformance suite is indexed by invariant ID, grows with each slice and never shrinks. |
 

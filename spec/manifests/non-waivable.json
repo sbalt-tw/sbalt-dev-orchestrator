@@ -1,0 +1,62 @@
+{
+ "manifest_version": 1,
+ "authority": "D18",
+ "rule": "policy_weakening may act only on an operational policy explicitly marked waivable. Everything listed here is non-waivable and can be changed only by a new specification PR carrying a Founder decision — never by a runtime policy_weakening envelope.",
+ "non_waivable": [
+  {
+   "id": "NW-1",
+   "subject": "INV-A1 — absence is never consent",
+   "reference": "spec/manifests/invariants.json#INV-A1"
+  },
+  {
+   "id": "NW-2",
+   "subject": "The Phase 0 completion gate",
+   "reference": "spec/manifests/gates.json#phase0_completion"
+  },
+  {
+   "id": "NW-3",
+   "subject": "The Phase 1A entry gate",
+   "reference": "spec/manifests/gates.json#phase1a_entry"
+  },
+  {
+   "id": "NW-4",
+   "subject": "The Founder staging-write gate",
+   "reference": "action kind staging_write"
+  },
+  {
+   "id": "NW-5",
+   "subject": "The Founder production-write gate",
+   "reference": "action kind production_write"
+  },
+  {
+   "id": "NW-6",
+   "subject": "The Founder destructive-operation gate",
+   "reference": "action kind destructive_operation"
+  },
+  {
+   "id": "NW-7",
+   "subject": "Codex independence — the reviewer is a principal distinct from the implementer",
+   "reference": "spec/manifests/invariants.json#INV-P3"
+  },
+  {
+   "id": "NW-8",
+   "subject": "Global Codex reviewer capacity = 1",
+   "reference": "spec/manifests/invariants.json#INV-P1"
+  },
+  {
+   "id": "NW-9",
+   "subject": "The exact-head review requirement",
+   "reference": "spec/manifests/invariants.json#INV-E7"
+  },
+  {
+   "id": "NW-10",
+   "subject": "One implementation PR per lane",
+   "reference": "spec/manifests/invariants.json#INV-R3"
+  }
+ ],
+ "waivable_targets": {
+  "requirement": "A policy_weakening authorization is refused unless its target_identity resolves to a policy explicitly marked waivable in the policy document in force.",
+  "default": "Unmarked is non-waivable. Absence of a waivable marking is never permission (INV-A1)."
+ },
+ "amendment": "Amending this list requires a new specification PR and a Founder decision reference. It cannot be amended at runtime."
+}

@@ -1,8 +1,15 @@
 name: spec
 
-# PR-0 is specification-only. There is deliberately no `build` step: the repository
-# ships no runtime source at this slice, so `tsc -p tsconfig.build.json` has nothing to
-# compile. PR-A introduces src/ and the build step returns with it.
+# The specification job runs on every branch and every PR, for ever.
+#
+# The boundary job is conditional: it enforces "specification-only" only while the BASE
+# commit does not yet contain the PR-0 completion marker. The marker is read from the base,
+# never from the head, so a pull request cannot declare itself finished in order to escape
+# the boundary. Once PR-0 has merged, the base carries the marker, PR-A may legitimately
+# add src/, and the boundary stands down while ordinary specification validation continues.
+#
+# There is no `build` step at this slice: the repository ships no runtime source, so
+# `tsc -p tsconfig.build.json` has nothing to compile. It returns with PR-A.
 
 on:
   push:
@@ -51,6 +58,16 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+
+          # The completion marker is read from the BASE commit only.
+          if git cat-file -e "$BASE:spec/manifests/invariants.json" 2>/dev/null; then
+            echo "The base already carries the PR-0 specification."
+            echo "The specification-only boundary does not apply from here on;"
+            echo "this PR may legitimately add runtime source."
+            exit 0
+          fi
+
+          echo "The base does not yet carry PR-0. Enforcing the specification-only boundary."
           changed=$(git diff --name-only "$BASE" "$HEAD")
           echo "changed files:"
           echo "$changed"
