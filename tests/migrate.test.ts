@@ -484,16 +484,25 @@ describe('a database left mid-transaction by a killed process', () => {
 describe('classification reads one consistent state', () => {
   const STATE_A = [V1_CREATE, `INSERT INTO schema_migrations VALUES (1, '${'0'.repeat(64)}', 'x')`];
 
+  let writerCommitted = false;
+
   function flipToStateB(): void {
     const script = `const D=require(${JSON.stringify(BETTER_SQLITE3)});`
       + 'const d=new D(process.argv[1]);d.pragma("busy_timeout = 250");'
       + 'try{d.exec("BEGIN IMMEDIATE");'
       + `d.exec("CREATE TABLE extra (a TEXT)");`
       + `d.exec("UPDATE schema_migrations SET checksum = '${V1_CHECKSUM}'");`
-      + 'd.exec("COMMIT");}catch(e){}d.close();';
+      + 'd.exec("COMMIT");process.stdout.write("committed");}'
+      + 'catch(e){process.stdout.write("blocked");}d.close();';
+    // The writer reports whether it actually committed instead of swallowing the outcome.
+    // It is not required to win: while the classifier holds its read transaction it cannot,
+    // and demanding that it should would deadlock this test.
     try {
-      execFileSync(process.execPath, ['-e', script, dbPath], { stdio: 'ignore' });
-    } catch { /* the writer may lose the lock; that is allowed */ }
+      const result = execFileSync(process.execPath, ['-e', script, dbPath], { encoding: 'utf8' });
+      writerCommitted = result.includes('committed');
+    } catch {
+      writerCommitted = false;
+    }
   }
 
   it('refuses each state on its own', () => {
@@ -510,12 +519,16 @@ describe('classification reads one consistent state', () => {
     // transaction it cannot, so the classifier sees only state A.
     const prepare = Database.prototype.prepare;
     let flipped = false;
+    let insideTransaction = false;
     (Database.prototype as unknown as { prepare: (s: string) => unknown }).prepare =
       function patched(this: Database.Database, source: string): unknown {
         // Flip between the two reads: the schema read has completed, the registry read has
         // not started. Firing before the first read would simply show both reads state B.
         if (!flipped && source.includes('FROM schema_migrations')) {
           flipped = true;
+          // A read transaction must be open at this point; without one the two reads are
+          // not a snapshot at all.
+          insideTransaction = this.inTransaction;
           flipToStateB();
         }
         return prepare.call(this, source);
@@ -525,15 +538,20 @@ describe('classification reads one consistent state', () => {
       try {
         outcome = initialise(dbPath).status;
       } catch (error) {
-        outcome = error instanceof InitError ? error.code : 'THREW';
+        // The exact error is asserted below. Anything else — including an incidental
+        // "cannot commit - no transaction is active" from a half-removed guard — is
+        // recorded verbatim so it cannot be mistaken for the expected refusal.
+        outcome = error instanceof InitError ? error.code : `NOT_AN_INIT_ERROR:${String(error)}`;
       }
     } finally {
       (Database.prototype as unknown as { prepare: (s: string) => unknown }).prepare = prepare;
     }
     expect(flipped).toBe(true);
-    // Whether the writer won its lock or not, neither real state is v1, so neither is
-    // acceptable. Only a mixed read could have produced already_at.
-    expect(outcome).not.toBe('already_at');
+    expect(insideTransaction).toBe(true);
+    expect(writerCommitted).toBe(false);
+    // State A, read whole: the schema is exactly v1 and the checksum is wrong. Asserting the
+    // precise code, not merely "not already_at", is what makes this a snapshot proof.
+    expect(outcome).toBe('E_CHECKSUM_MISMATCH');
   });
 });
 
@@ -624,10 +642,9 @@ describe('the synchronisation steps that precede a success report', () => {
     } catch (error) {
       code = error instanceof FreshError ? error.code : 'WRONG_TYPE';
     }
-    expect(code).toBe('E_CREATE_FAILED');
-    // The link already existed when the flush failed, so the database is present but was
-    // never reported as applied. A later run classifies it normally rather than trusting an
-    // unflushed success. This is stated in the README as an accepted behaviour.
+    // A distinct outcome from a pre-publication failure: the link already existed when the
+    // flush failed, so the database is present and is deliberately not removed.
+    expect(code).toBe('E_PUBLISHED_NOT_SYNCED');
     expect(entries()).toEqual(['orchestrator.sqlite']);
   });
 });
@@ -672,6 +689,151 @@ describe('a sidecar that cannot be stat-ed', () => {
     expect(injected).toBeGreaterThan(0);
     expect(code).toBe('E_DB_RECOVERY_REQUIRED');
     expect(existsSync(dbPath)).toBe(false);
+    expect(entries()).toEqual([]);
+  });
+});
+
+// 1. A cleanly closed write-ahead-log database leaves no sidecar behind, so the sidecar check
+// cannot see it, and merely opening it read-only makes SQLite create -wal and -shm. The
+// journal format is settled from the file header before any connection exists.
+describe('a database in the write-ahead-log format', () => {
+  function seedWal(target: string): void {
+    const db = new Database(target);
+    db.pragma('journal_mode = WAL');
+    db.exec(V1_CREATE);
+    db.prepare('INSERT INTO schema_migrations VALUES (?, ?, ?)')
+      .run(1, V1_CHECKSUM, '2026-01-01T00:00:00.000Z');
+    db.close();
+  }
+
+  it('is refused twice, without creating sidecars or changing a byte', () => {
+    seedWal(dbPath);
+    // The premise: cleanly closed, exact v1 content, and no sidecar for the earlier check
+    // to catch. Only the header distinguishes it.
+    expect(entries()).toEqual(['orchestrator.sqlite']);
+    const before = digest(dbPath);
+
+    expectCode(() => initialise(dbPath), 'E_DB_UNSUPPORTED_FORMAT');
+    expect(entries()).toEqual(['orchestrator.sqlite']);
+    expect(digest(dbPath)).toBe(before);
+
+    // Twice: the first call must not have left the target in a state the second refuses
+    // differently.
+    expectCode(() => initialise(dbPath), 'E_DB_UNSUPPORTED_FORMAT');
+    expect(entries()).toEqual(['orchestrator.sqlite']);
+    expect(digest(dbPath)).toBe(before);
+  });
+
+  it('refuses a file whose header is not SQLite at all', () => {
+    writeFileSync(dbPath, 'x'.repeat(200));
+    expectCode(() => initialise(dbPath), 'E_DB_NOT_SQLITE');
+  });
+
+  it('still accepts, and then recognizes, an ordinary rollback-journal database', () => {
+    expect(initialise(dbPath).status).toBe('applied');
+    expect(initialise(dbPath).status).toBe('already_at');
+    expect(entries()).toEqual(['orchestrator.sqlite']);
+  });
+});
+
+// 2. Publication that succeeds and then fails to flush is a different event from a failure
+// before publication, and is reported as one.
+describe('a failure to flush after the database is published', () => {
+  afterEach(() => { vi.doUnmock('node:fs'); vi.resetModules(); });
+
+  it('reports a distinct code and leaves the published database in place', async () => {
+    vi.resetModules();
+    vi.doMock('node:fs', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:fs')>();
+      const paths = new Map<number, string>();
+      return {
+        ...actual,
+        openSync(target: string, flags: string) {
+          const fd = actual.openSync(target, flags);
+          paths.set(fd, target);
+          return fd;
+        },
+        fsyncSync(fd: number) {
+          if (paths.get(fd) === realpathSync(dir)) throw new Error('injected directory sync failure');
+          return actual.fsyncSync(fd);
+        },
+      };
+    });
+    const { initialise: fresh, InitError: FreshError } = await import('../src/db/migrate.js');
+
+    let code: string | undefined;
+    try {
+      fresh(dbPath);
+    } catch (error) {
+      code = error instanceof FreshError ? error.code : `WRONG_TYPE:${String(error)}`;
+    }
+    expect(code).toBe('E_PUBLISHED_NOT_SYNCED');
+
+    // The target exists, is a complete v1 database, and was NOT deleted to fake a rollback.
+    expect(entries()).toEqual(['orchestrator.sqlite']);
+    const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    expect(db.prepare('SELECT version, checksum FROM schema_migrations').all())
+      .toEqual([{ version: 1, checksum: V1_CHECKSUM }]);
+    db.close();
+
+    // A later run recognizes the version. That is all it proves: it says nothing about
+    // whether the earlier flush ever reached the disk.
+    vi.doUnmock('node:fs');
+    vi.resetModules();
+    const { initialise: again } = await import('../src/db/migrate.js');
+    expect(again(dbPath).status).toBe('already_at');
+  });
+});
+
+// 4. An unpaired surrogate is refused rather than silently replaced, because UTF-8 encoding
+// would map it to U+FFFD and let two different declared migrations share one preimage.
+describe('checksum input domain', () => {
+  it('refuses an ill-formed statement instead of rewriting it', () => {
+    expectCode(() => checksumOf({ version: 1, statements: ['\uD800'] }), 'E_INTERNAL');
+    expectCode(() => canonicalBytes({ version: 1, statements: ['a\uDC00b'] }), 'E_INTERNAL');
+  });
+
+  it('accepts the legitimate replacement character, which is a real code point', () => {
+    const sum = checksumOf({ version: 1, statements: ['�'] });
+    expect(sum).toMatch(/^[0-9a-f]{64}$/);
+    // The pair that used to collide can no longer be compared: one side is now refused.
+    expect(sum).not.toBe(V1_CHECKSUM);
+  });
+
+  it('leaves the released v1 identity untouched', () => {
+    expect(checksumOf(V1)).toBe(V1_CHECKSUM);
+  });
+});
+
+// 5. The declared platform boundary is enforced before anything touches the target.
+describe('the supported platform boundary', () => {
+  it('agrees across package.json, the lockfile root and the runtime', async () => {
+    const manifest = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'package.json'), 'utf8')) as
+      { os: string[]; engines: { node: string } };
+    const lock = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'package-lock.json'), 'utf8')) as
+      { packages: Record<string, { os?: string[]; engines?: { node: string } }> };
+    const root = lock.packages[''];
+    expect(manifest.os).toEqual(['linux', 'darwin']);
+    expect(root?.os).toEqual(manifest.os);
+    expect(root?.engines?.node).toBe(manifest.engines.node);
+    // The platform this suite runs on is one of the declared ones.
+    expect(manifest.os).toContain(process.platform);
+  });
+});
+
+// The platform gate is only observable by pretending to be an unsupported platform: the
+// suite itself runs on a supported one, so without this the guard could be deleted unnoticed.
+describe('an unsupported platform', () => {
+  it('is refused before anything touches the target', () => {
+    const original = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      expectCode(() => initialise(dbPath), 'E_PLATFORM_UNSUPPORTED');
+    } finally {
+      if (original) Object.defineProperty(process, 'platform', original);
+    }
+    expect(process.platform).not.toBe('win32');
+    // No database, no temporary file, nothing.
     expect(entries()).toEqual([]);
   });
 });

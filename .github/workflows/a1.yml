@@ -60,8 +60,16 @@ jobs:
           # F5. The project floor must match what the locked dependency actually declares.
           declared=$(node -p "require('./package.json').engines.node")
           required=$(node -p "require('better-sqlite3/package.json').engines.node")
-          printf 'engines.node     : project %s / dependency %s\n' "$declared" "$required"
+          # The lockfile root carries its own copy of this metadata and used to disagree, so
+          # it is compared too rather than assumed to follow package.json.
+          locked=$(node -p "require('./package-lock.json').packages[''].engines.node")
+          printf 'engines.node     : project %s / lockfile %s / dependency %s\n' "$declared" "$locked" "$required"
           [ "$declared" = "$required" ] || { echo "::error::engines.node does not match the pinned driver"; exit 1; }
+          [ "$locked" = "$declared" ] || { echo "::error::package-lock.json root engines.node is stale"; exit 1; }
+          os_declared=$(node -p "JSON.stringify(require('./package.json').os)")
+          os_locked=$(node -p "JSON.stringify(require('./package-lock.json').packages[''].os)")
+          printf 'os               : project %s / lockfile %s\n' "$os_declared" "$os_locked"
+          [ "$os_declared" = "$os_locked" ] || { echo "::error::package-lock.json root os is stale"; exit 1; }
       - name: Typecheck
         run: npm run typecheck
       - name: Lint

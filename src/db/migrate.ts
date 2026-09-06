@@ -10,18 +10,20 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  closeSync, fsyncSync, linkSync, lstatSync, openSync, realpathSync, rmSync, statSync,
+  closeSync, fsyncSync, linkSync, lstatSync, openSync, readSync, realpathSync, rmSync, statSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize, sep } from 'node:path';
 import Database from 'better-sqlite3';
 
 export const REASON_CODES = [
+  'E_PLATFORM_UNSUPPORTED',
   'E_DB_ARG_MISSING',
   'E_DB_PATH_NOT_ABSOLUTE',
   'E_DB_PATH_NOT_CANONICAL',
   'E_DB_PARENT_MISSING',
   'E_DB_TARGET_NOT_REGULAR_FILE',
   'E_DB_NOT_SQLITE',
+  'E_DB_UNSUPPORTED_FORMAT',
   'E_DB_BUSY',
   'E_DB_EMPTY_FILE',
   'E_DB_RECOVERY_REQUIRED',
@@ -31,6 +33,7 @@ export const REASON_CODES = [
   'E_UNKNOWN_VERSION',
   'E_CHECKSUM_MISMATCH',
   'E_CREATE_FAILED',
+  'E_PUBLISHED_NOT_SYNCED',
   'E_INTERNAL',
 ] as const;
 
@@ -42,12 +45,14 @@ export type ReasonCode = (typeof REASON_CODES)[number];
  * so the output carries no database content and no attacker-controlled bytes.
  */
 export const REASON_TEXT: Readonly<Record<ReasonCode, string>> = Object.freeze({
+  E_PLATFORM_UNSUPPORTED: 'this platform is not supported; only Linux and macOS are',
   E_DB_ARG_MISSING: 'usage: dev-orch db:init --db <absolute-path>',
   E_DB_PATH_NOT_ABSOLUTE: 'the database path must be absolute',
   E_DB_PATH_NOT_CANONICAL: 'the database path must be canonical: no ".", "..", repeated or trailing separator',
   E_DB_PARENT_MISSING: 'the parent directory does not exist and is not created',
   E_DB_TARGET_NOT_REGULAR_FILE: 'the target exists and is not a regular file',
   E_DB_NOT_SQLITE: 'the path is not a readable SQLite database',
+  E_DB_UNSUPPORTED_FORMAT: 'the database is not in the supported rollback-journal format',
   E_DB_BUSY: 'the database is locked by another process; retrying later may succeed',
   E_DB_EMPTY_FILE: 'the path exists but holds no schema',
   E_DB_RECOVERY_REQUIRED: 'the database has journal or write-ahead sidecars and needs recovery',
@@ -57,6 +62,8 @@ export const REASON_TEXT: Readonly<Record<ReasonCode, string>> = Object.freeze({
   E_UNKNOWN_VERSION: 'the recorded migration version is not version 1',
   E_CHECKSUM_MISMATCH: 'the recorded checksum does not match version 1',
   E_CREATE_FAILED: 'the database could not be created',
+  E_PUBLISHED_NOT_SYNCED: 'the database was published but its durability is unconfirmed; '
+    + 'the target may exist and has not been removed',
   E_INTERNAL: 'the command failed',
 });
 
@@ -107,7 +114,28 @@ export const V1: Migration = Object.freeze({
  */
 export const CHECKSUM_ALGORITHM = 'dev-orch/migration-checksum/v2';
 
+/**
+ * True when every code point is a real character. Iterating a string yields code points, so
+ * a correctly paired surrogate appears once above U+FFFF, while an unpaired one surfaces in
+ * the surrogate range and is rejected.
+ */
+function isWellFormed(value: string): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code >= 0xd800 && code <= 0xdfff) return false;
+  }
+  return true;
+}
+
 export function canonicalBytes(migration: Migration): Buffer {
+  // A JavaScript string may hold an unpaired surrogate, and UTF-8 encoding replaces it with
+  // U+FFFD. Two different declared migrations could therefore encode to the same bytes, so
+  // an ill-formed statement is refused rather than silently rewritten. Encoding here is
+  // injective over well-formed strings; SHA-256 collision resistance is a separate and
+  // unproven assumption, not a mathematical impossibility.
+  for (const statement of migration.statements) {
+    if (!isWellFormed(statement)) throw new InitError('E_INTERNAL');
+  }
   const parts = [
     Buffer.from(`${CHECKSUM_ALGORITHM}\n`, 'utf8'),
     Buffer.from(`version:${migration.version}\n`, 'utf8'),
@@ -155,6 +183,19 @@ function classifyDriverFailure(error: unknown): InitError {
 }
 interface RegistryRow { version: unknown; checksum: unknown }
 
+/**
+ * A1 supports Linux and macOS on a local filesystem. Windows is not supported: the durable
+ * publication below flushes a directory, which Windows does not provide through this API.
+ * The check runs before anything touches the target, so an unsupported platform never opens,
+ * creates or modifies a database.
+ */
+const SUPPORTED_PLATFORMS: readonly string[] = ['linux', 'darwin'];
+
+const SQLITE_MAGIC = Buffer.from('SQLite format 3\0', 'latin1');
+const HEADER_BYTES = 100;
+const WRITE_VERSION_OFFSET = 18;
+const READ_VERSION_OFFSET = 19;
+
 /** Sidecars that mean the database is mid-transaction or in a mode this runner never uses. */
 const SIDECAR_SUFFIXES = ['-journal', '-wal', '-shm'] as const;
 
@@ -171,6 +212,7 @@ function classifyExisting(dbPath: string): InitOutcome {
   const stat = lstatSync(dbPath);
   if (!stat.isFile()) throw new InitError('E_DB_TARGET_NOT_REGULAR_FILE');
   if (stat.size === 0) throw new InitError('E_DB_EMPTY_FILE');
+  refuseUnsupportedFormat(dbPath);
 
   let db: Database.Database;
   try {
@@ -246,6 +288,43 @@ function classifyInOneSnapshot(db: Database.Database): InitOutcome {
  * Only ENOENT counts as absence: a dangling sidecar symlink, or a metadata error, refuses
  * rather than failing open.
  */
+/**
+ * Reads the SQLite header from the file itself, before any connection exists.
+ *
+ * A cleanly closed write-ahead-log database leaves no `-wal` or `-shm` behind, so the sidecar
+ * check above cannot see it — and merely opening such a database read-only makes SQLite
+ * create those files, because it opens the log itself read-write. That turned a recognized
+ * database into one this runner then refused on the next run. The journal format is therefore
+ * settled from the bytes on disk: only read version 1 and write version 1, the rollback
+ * journal format, are accepted. Nothing is converted, no sidecar is removed, and the
+ * `immutable` open flag is deliberately not used to paper over the check.
+ */
+function refuseUnsupportedFormat(dbPath: string): void {
+  const header = Buffer.alloc(HEADER_BYTES);
+  let fd: number;
+  try {
+    fd = openSync(dbPath, 'r');
+  } catch {
+    throw new InitError('E_DB_NOT_SQLITE');
+  }
+  let read: number;
+  try {
+    read = readSync(fd, header, 0, HEADER_BYTES, 0);
+  } catch {
+    throw new InitError('E_DB_NOT_SQLITE');
+  } finally {
+    closeSync(fd);
+  }
+  if (read < HEADER_BYTES || !header.subarray(0, SQLITE_MAGIC.length).equals(SQLITE_MAGIC)) {
+    throw new InitError('E_DB_NOT_SQLITE');
+  }
+  // Offsets 18 and 19 are the write and read format versions. 1 is the rollback journal;
+  // 2 is the write-ahead log; anything else is a format this runner does not know.
+  if (header[WRITE_VERSION_OFFSET] !== 1 || header[READ_VERSION_OFFSET] !== 1) {
+    throw new InitError('E_DB_UNSUPPORTED_FORMAT');
+  }
+}
+
 function refuseRecoverySidecars(dbPath: string): void {
   for (const suffix of SIDECAR_SUFFIXES) {
     try {
@@ -284,10 +363,19 @@ function createAtomically(dbPath: string): InitOutcome {
     if (!published.isFile() || published.ino !== built.ino || published.dev !== built.dev) {
       throw new InitError('E_CREATE_FAILED');
     }
-    // F10. The directory entry is flushed before success is reported, and a failure to
-    // flush is reported as a failure rather than swallowed. Real power-loss durability is
-    // filesystem-dependent and is not claimed.
-    fsyncPath(dirname(dbPath));
+    // The directory entry is flushed before success is reported, and a failure to flush is
+    // reported rather than swallowed. Real power-loss durability is filesystem-dependent and
+    // is not claimed.
+    //
+    // This failure is reported under its own code because it is not the same event as a
+    // failure before publication: the target now exists and is a valid v1 database. It is
+    // deliberately NOT removed — deleting a published database to simulate a rollback would
+    // destroy state this runner had already handed over.
+    try {
+      fsyncPath(dirname(dbPath));
+    } catch {
+      throw new InitError('E_PUBLISHED_NOT_SYNCED');
+    }
     return { status: 'applied', version: V1.version, checksum: V1_CHECKSUM };
   } finally {
     for (const suffix of ['', ...SIDECAR_SUFFIXES]) rmSync(temporary + suffix, { force: true });
@@ -355,6 +443,10 @@ function buildV1(temporary: string): void {
  * recognized or refused.
  */
 export function initialise(dbPath: string): InitOutcome {
+  // Before the path is even examined: an unsupported platform must not touch a database.
+  if (!SUPPORTED_PLATFORMS.includes(process.platform)) {
+    throw new InitError('E_PLATFORM_UNSUPPORTED');
+  }
   const target = canonicalTarget(dbPath);
   // Before choosing a branch: a recovery sidecar disqualifies the target whether or not the
   // database itself is there.

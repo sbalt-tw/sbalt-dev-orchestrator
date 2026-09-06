@@ -7,6 +7,10 @@
   "engines": {
     "node": ">=22"
   },
+  "os": [
+    "linux",
+    "darwin"
+  ],
   "bin": {
     "dev-orch": "./dist/cli/index.js"
   },
