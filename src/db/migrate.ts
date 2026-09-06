@@ -9,14 +9,16 @@
 // accepts no SQL, no migration and no fault-injection payload from a caller.
 
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, linkSync, rmSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
+import { existsSync, linkSync, lstatSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, normalize, sep } from 'node:path';
 import Database from 'better-sqlite3';
 
 export const REASON_CODES = [
   'E_DB_ARG_MISSING',
   'E_DB_PATH_NOT_ABSOLUTE',
+  'E_DB_PATH_NOT_CANONICAL',
   'E_DB_PARENT_MISSING',
+  'E_DB_TARGET_NOT_REGULAR_FILE',
   'E_DB_NOT_SQLITE',
   'E_DB_EMPTY_FILE',
   'E_DB_RECOVERY_REQUIRED',
@@ -39,7 +41,9 @@ export type ReasonCode = (typeof REASON_CODES)[number];
 export const REASON_TEXT: Readonly<Record<ReasonCode, string>> = Object.freeze({
   E_DB_ARG_MISSING: 'usage: dev-orch db:init --db <absolute-path>',
   E_DB_PATH_NOT_ABSOLUTE: 'the database path must be absolute',
+  E_DB_PATH_NOT_CANONICAL: 'the database path must be canonical: no ".", "..", repeated or trailing separator',
   E_DB_PARENT_MISSING: 'the parent directory does not exist and is not created',
+  E_DB_TARGET_NOT_REGULAR_FILE: 'the target exists and is not a regular file',
   E_DB_NOT_SQLITE: 'the path is not a readable SQLite database',
   E_DB_EMPTY_FILE: 'the path exists but holds no schema',
   E_DB_RECOVERY_REQUIRED: 'the database has journal or write-ahead sidecars and needs recovery',
@@ -147,8 +151,10 @@ function classifyExisting(dbPath: string): InitOutcome {
   for (const suffix of SIDECAR_SUFFIXES) {
     if (existsSync(dbPath + suffix)) throw new InitError('E_DB_RECOVERY_REQUIRED');
   }
-  const stat = statSync(dbPath);
-  if (!stat.isFile()) throw new InitError('E_DB_NOT_SQLITE');
+  // lstat, never stat: a symlink in the target position is refused as a target kind, and
+  // is never resolved and classified as though it were the database itself.
+  const stat = lstatSync(dbPath);
+  if (!stat.isFile()) throw new InitError('E_DB_TARGET_NOT_REGULAR_FILE');
   if (stat.size === 0) throw new InitError('E_DB_EMPTY_FILE');
 
   let db: Database.Database;
@@ -197,19 +203,44 @@ function classifyExisting(dbPath: string): InitOutcome {
  * because its POSIX semantics replace the destination silently.
  */
 function createAtomically(dbPath: string): InitOutcome {
+  // The temporary database lives in the target's own resolved directory, so link() stays
+  // within one filesystem and the publication is a rename-free, no-clobber operation.
   const temporary = join(dirname(dbPath), `.dev-orch-init-${process.pid}-${randomUUID()}.tmp`);
   try {
     buildV1(temporary);
+    const built = statSync(temporary);
     try {
       linkSync(temporary, dbPath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') return classifyExisting(dbPath);
       throw new InitError('E_CREATE_FAILED');
     }
+    // Re-establish identity rather than trust the earlier checks: the published name must
+    // be a regular file, and the very inode this runner just verified.
+    const published = lstatSync(dbPath);
+    if (!published.isFile() || published.ino !== built.ino || published.dev !== built.dev) {
+      throw new InitError('E_CREATE_FAILED');
+    }
     return { status: 'applied', version: V1.version, checksum: V1_CHECKSUM };
   } finally {
     for (const suffix of ['', ...SIDECAR_SUFFIXES]) rmSync(temporary + suffix, { force: true });
   }
+}
+
+/**
+ * The one production migration transaction: the schema object and the version row commit
+ * together or not at all. `betweenStatements` exists so a test can fail the second
+ * statement after the first has succeeded and observe that neither survives; it carries no
+ * SQL, no migration and no registry, production passes nothing, and this module is not a
+ * package entry point — the only runtime entry point is the CLI, which calls buildV1.
+ */
+export function runV1Transaction(db: Database.Database, betweenStatements?: () => void): void {
+  db.transaction(() => {
+    db.exec(V1_CREATE);
+    if (betweenStatements) betweenStatements();
+    db.prepare('INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)')
+      .run(V1.version, V1_CHECKSUM, new Date().toISOString());
+  })();
 }
 
 function buildV1(temporary: string): void {
@@ -224,12 +255,7 @@ function buildV1(temporary: string): void {
     if (db.pragma('foreign_keys', { simple: true }) !== 1) {
       throw new InitError('E_FOREIGN_KEYS_NOT_ENABLED');
     }
-    // The schema object and the version row commit together or not at all.
-    db.transaction(() => {
-      db.exec(V1_CREATE);
-      db.prepare('INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)')
-        .run(V1.version, V1_CHECKSUM, new Date().toISOString());
-    })();
+    runV1Transaction(db);
   } catch (error) {
     db.close();
     throw error instanceof InitError ? error : new InitError('E_CREATE_FAILED');
@@ -245,7 +271,41 @@ function buildV1(temporary: string): void {
  * recognized or refused.
  */
 export function initialise(dbPath: string): InitOutcome {
-  if (!isAbsolute(dbPath)) throw new InitError('E_DB_PATH_NOT_ABSOLUTE');
-  if (!existsSync(dirname(dbPath))) throw new InitError('E_DB_PARENT_MISSING');
-  return existsSync(dbPath) ? classifyExisting(dbPath) : createAtomically(dbPath);
+  const target = canonicalTarget(dbPath);
+  // lstat decides existence, so a dangling symlink counts as an occupied target and is
+  // refused by kind rather than falling through to creation.
+  let occupied = true;
+  try {
+    lstatSync(target);
+  } catch {
+    occupied = false;
+  }
+  return occupied ? classifyExisting(target) : createAtomically(target);
+}
+
+/**
+ * Accepts only a platform-native, lexically canonical absolute path whose parent already
+ * exists, and returns the target rebuilt on the parent's realpath. Everything downstream —
+ * the temporary database, classification and publication — uses that resolved form, so a
+ * symlinked parent is resolved exactly once and never re-derived from the original text.
+ */
+function canonicalTarget(dbPath: string): string {
+  if (dbPath === '' || !isAbsolute(dbPath)) throw new InitError('E_DB_PATH_NOT_ABSOLUTE');
+  // normalize() collapses ".", ".." and repeated separators but keeps a trailing one, so
+  // these two comparisons together reject every non-canonical spelling.
+  if (dbPath !== normalize(dbPath) || dbPath.endsWith(sep)) {
+    throw new InitError('E_DB_PATH_NOT_CANONICAL');
+  }
+  // No basename check: normalize() collapses "." and "..", "/" is the only path with an
+  // empty basename, and mutation testing confirmed a standalone guard can never fire.
+  const name = basename(dbPath);
+
+  let parent: string;
+  try {
+    parent = realpathSync(dirname(dbPath));
+  } catch {
+    throw new InitError('E_DB_PARENT_MISSING');
+  }
+  if (!statSync(parent).isDirectory()) throw new InitError('E_DB_PARENT_MISSING');
+  return join(parent, name);
 }

@@ -1,12 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, inject } from 'vitest';
 import { execFile } from 'node:child_process';
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { assertFreshlyBuilt } from './build-cli.js';
 import Database from 'better-sqlite3';
 import { V1_CHECKSUM, V1_CREATE } from '../src/db/migrate.js';
 
-const CLI = resolve(import.meta.dirname, '..', 'dist', 'cli', 'index.js');
+const CLI = assertFreshlyBuilt(inject('cliPath'));
 const RACERS = 6;
 
 let dir: string;

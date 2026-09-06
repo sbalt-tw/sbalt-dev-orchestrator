@@ -59,10 +59,23 @@ jobs:
         run: npm run typecheck
       - name: Lint
         run: npm run lint
-      - name: Build
-        run: npm run build
+      # Tests run before any build, from a clean checkout, so a green suite proves the
+      # harness compiles what it needs for itself and never reuses a leftover dist/.
+      - name: No build output exists yet
+        run: |
+          set -euo pipefail
+          [ ! -e dist ] || { echo "::error::dist/ exists before the test step"; exit 1; }
+          echo "dist/ absent"
       - name: Tests
         run: npm test
+      - name: The test run cleaned up its own build directory
+        run: |
+          set -euo pipefail
+          left=$(find node_modules -maxdepth 1 -name '.a1-build-*' | wc -l | tr -d ' ')
+          printf 'leftover per-run build directories: %s\n' "$left"
+          [ "$left" = "0" ] || { echo "::error::a temporary build directory was left behind"; exit 1; }
+      - name: Build
+        run: npm run build
       - name: Compiled CLI smoke
         run: |
           set -euo pipefail

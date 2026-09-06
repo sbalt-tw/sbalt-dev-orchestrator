@@ -1,14 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, inject } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { assertFreshlyBuilt } from './build-cli.js';
 import Database from 'better-sqlite3';
 import { V1_CHECKSUM, V1_CREATE } from '../src/db/migrate.js';
 
-// `npm test` builds first, so this exercises the compiled artifact the bin field points at.
-const CLI = resolve(import.meta.dirname, '..', 'dist', 'cli', 'index.js');
+// Built by this run into its own directory; never the repository's dist/.
+const CLI = assertFreshlyBuilt(inject('cliPath'));
 
 interface Result { status: number; stdout: string; stderr: string }
 

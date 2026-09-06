@@ -1,13 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync,
+  statSync, symlinkSync, writeFileSync,
+} from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
 import {
-  initialise, InitError, canonicalBytes, checksumOf,
+  initialise, runV1Transaction, InitError, canonicalBytes, checksumOf,
   CHECKSUM_ALGORITHM, V1, V1_CHECKSUM, V1_CREATE,
 } from '../src/db/migrate.js';
+
+// Resolved here so the crash fixture can load the same driver from a bare child process.
+const BETTER_SQLITE3 = createRequire(import.meta.url).resolve('better-sqlite3');
 
 let dir: string;
 let dbPath: string;
@@ -102,21 +110,6 @@ describe('creating a database that does not exist', () => {
     expect(initialise(dbPath)).toEqual({ status: 'already_at', version: 1, checksum: V1_CHECKSUM });
     expect(digest(dbPath)).toBe(before);
     expect(entries()).toEqual(['orchestrator.sqlite']);
-  });
-});
-
-describe('paths', () => {
-  it('refuses a relative path', () => expectCode(() => initialise('relative.sqlite'), 'E_DB_PATH_NOT_ABSOLUTE'));
-
-  it('refuses a missing parent directory and does not create it', () => {
-    const nested = join(dir, 'absent', 'orchestrator.sqlite');
-    expectCode(() => initialise(nested), 'E_DB_PARENT_MISSING');
-    expect(entries()).toEqual([]);
-  });
-
-  it('refuses a directory in the target position', () => {
-    mkdirSync(dbPath);
-    expectCode(() => initialise(dbPath), 'E_DB_NOT_SQLITE');
   });
 });
 
@@ -263,5 +256,133 @@ describe('the production write path, observed by patching the driver', () => {
     }
     // No target, and no temporary database, journal or write-ahead file left behind.
     expect(entries()).toEqual([]);
+  });
+});
+
+describe('the path contract', () => {
+  it.each([
+    ['a relative path', 'relative.sqlite'],
+    ['the empty string', ''],
+  ])('refuses %s', (_label, path) => expectCode(() => initialise(path), 'E_DB_PATH_NOT_ABSOLUTE'));
+
+  it.each([
+    ['a "." segment', (d: string) => `${d}/./db.sqlite`],
+    ['a ".." segment', (d: string) => `${d}/sub/../db.sqlite`],
+    ['repeated separators', (d: string) => `${d}//db.sqlite`],
+    ['a trailing separator', (d: string) => `${d}/db.sqlite/`],
+    ['a "." basename', (d: string) => `${d}/.`],
+    ['a ".." basename', (d: string) => `${d}/..`],
+  ])('refuses %s and creates nothing', (_label, build) => {
+    mkdirSync(join(dir, 'sub'));
+    expectCode(() => initialise(build(dir)), 'E_DB_PATH_NOT_CANONICAL');
+    expect(entries()).toEqual(['sub']);
+  });
+
+  it('refuses a symlink in the target position without following it', () => {
+    const real = join(dir, 'real.sqlite');
+    initialise(real);
+    const before = digest(real);
+    symlinkSync(real, dbPath);
+    expectCode(() => initialise(dbPath), 'E_DB_TARGET_NOT_REGULAR_FILE');
+    expect(readlinkSync(dbPath)).toBe(real);
+    expect(digest(real)).toBe(before);
+  });
+
+  it('refuses a dangling symlink instead of creating through it', () => {
+    symlinkSync(join(dir, 'nothing-here'), dbPath);
+    expectCode(() => initialise(dbPath), 'E_DB_TARGET_NOT_REGULAR_FILE');
+    expect(existsSync(join(dir, 'nothing-here'))).toBe(false);
+    expect(entries()).toEqual(['orchestrator.sqlite']);
+  });
+
+  it('refuses a symlink pointing outside the directory, leaving the victim untouched', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'a1-outside-'));
+    const victim = join(outside, 'victim');
+    writeFileSync(victim, 'unrelated bytes');
+    try {
+      symlinkSync(victim, dbPath);
+      expectCode(() => initialise(dbPath), 'E_DB_TARGET_NOT_REGULAR_FILE');
+      expect(readFileSync(victim, 'utf8')).toBe('unrelated bytes');
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['a directory', (p: string) => mkdirSync(p)],
+    ['a FIFO', (p: string) => { execFileSync('mkfifo', [p]); }],
+  ])('refuses %s in the target position', (_label, make) => {
+    make(dbPath);
+    expectCode(() => initialise(dbPath), 'E_DB_TARGET_NOT_REGULAR_FILE');
+  });
+
+  it('resolves a symlinked parent and works inside the real directory', () => {
+    const real = join(dir, 'realdir');
+    mkdirSync(real);
+    symlinkSync(real, join(dir, 'linkdir'));
+    expect(initialise(join(dir, 'linkdir', 'orchestrator.sqlite')).status).toBe('applied');
+    expect(readdirSync(real)).toEqual(['orchestrator.sqlite']);
+  });
+
+  it('treats a symlinked parent and the real parent as one target', () => {
+    const real = join(dir, 'realdir');
+    mkdirSync(real);
+    symlinkSync(real, join(dir, 'linkdir'));
+    expect(initialise(join(dir, 'realdir', 'orchestrator.sqlite')).status).toBe('applied');
+    expect(initialise(join(dir, 'linkdir', 'orchestrator.sqlite')).status).toBe('already_at');
+    expect(readdirSync(real)).toEqual(['orchestrator.sqlite']);
+  });
+
+  it('refuses a missing parent and does not create it', () => {
+    expectCode(() => initialise(join(dir, 'absent', 'db.sqlite')), 'E_DB_PARENT_MISSING');
+    expect(entries()).toEqual([]);
+  });
+});
+
+describe('the migration transaction, observed on the production executor', () => {
+  it('leaves neither the table nor the row when the second statement fails', () => {
+    const db = new Database(dbPath);
+    try {
+      expect(() => runV1Transaction(db, () => { throw new Error('injected between statements'); }))
+        .toThrow('injected between statements');
+      expect(db.prepare('SELECT type, name FROM sqlite_master').all()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('commits both statements together when nothing fails', () => {
+    const db = new Database(dbPath);
+    try {
+      runV1Transaction(db);
+      expect(db.prepare('SELECT name FROM sqlite_master').all()).toEqual([{ name: 'schema_migrations' }]);
+      expect(db.prepare('SELECT version FROM schema_migrations').all()).toEqual([{ version: 1 }]);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('a database left mid-transaction by a killed process', () => {
+  it('is refused, and its bytes and journal are left exactly as they were', () => {
+    initialise(dbPath);
+    const crash = `const D=require(${JSON.stringify(BETTER_SQLITE3)});`
+      + 'const d=new D(process.argv[1]);'
+      + "d.exec('BEGIN IMMEDIATE');d.exec('CREATE TABLE half_written (a TEXT)');"
+      + "process.kill(process.pid,'SIGKILL');";
+    try {
+      execFileSync(process.execPath, ['-e', crash, dbPath], { stdio: 'ignore' });
+    } catch { /* the child is killed on purpose */ }
+
+    const journal = `${dbPath}-journal`;
+    expect(existsSync(journal)).toBe(true);
+    const dbBefore = digest(dbPath);
+    const journalBefore = digest(journal);
+
+    expectCode(() => initialise(dbPath), 'E_DB_RECOVERY_REQUIRED');
+
+    expect(digest(dbPath)).toBe(dbBefore);
+    expect(digest(journal)).toBe(journalBefore);
+    expect(entries()).toEqual(['orchestrator.sqlite', 'orchestrator.sqlite-journal']);
   });
 });
