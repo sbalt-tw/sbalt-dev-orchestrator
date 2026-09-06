@@ -135,7 +135,13 @@ jobs:
           [ "$applied" = "1" ] || { echo "::error::the race did not produce exactly one creator"; exit 1; }
           [ "$already" = "5" ] || { echo "::error::the race did not produce five already_at"; exit 1; }
           [ "$errbytes" = "0" ] || { echo "::error::a racer wrote to stderr"; exit 1; }
-          # ls -A, so a hidden leftover temporary database is counted too.
-          leftover=$(ls -A "$work/racedir" | grep -cv '^race.sqlite$' || true)
-          [ "$leftover" = "0" ] || { echo "::error::the race left files beside the target"; ls -A "$work/racedir"; exit 1; }
+          # Enumeration failure and "present and empty" are different outcomes. The previous
+          # form piped ls into grep, so ls's exit status was lost and a missing or unreadable
+          # directory produced a count of 0 and passed.
+          if ! entries=$(ls -A "$work/racedir" 2>/dev/null); then
+            echo "::error::could not enumerate the race directory"; exit 1
+          fi
+          leftover=$(printf '%s\n' "$entries" | grep -cvx 'race.sqlite' || true)
+          printf 'race directory leftovers: %s\n' "$leftover"
+          [ "$leftover" = "0" ] || { echo "::error::the race left files beside the target"; printf '%s\n' "$entries"; exit 1; }
           echo "compiled CLI smoke passed"

@@ -32,16 +32,18 @@ function launch(): Promise<Outcome> {
 }
 
 /**
- * Starts every racer, then releases them together, so they contend for one target instead of
- * completing in sequence. Without this the test could pass on a machine that simply never
- * overlapped the processes.
+ * Starts every racer together. This synchronises process START only; it does not control the
+ * window between "observed the target absent" and "published", so it cannot guarantee that
+ * any process reaches the EEXIST branch — a sequential schedule would satisfy every
+ * assertion below. It is therefore a PARALLEL SMOKE, not proof of contention. The
+ * deterministic EEXIST evidence is the controlled-interleaving test in migrate.test.ts.
  */
 function launchAllTogether(count: number): Promise<Outcome[]> {
   const started = Array.from({ length: count }, () => launch());
   return Promise.all(started);
 }
 
-describe('several independent processes initialising the same path at once', () => {
+describe('parallel smoke: several independent processes against one path', () => {
   it('publishes exactly one database, and no loser modifies the winner', async () => {
     // Real operating system processes, started together, all targeting one path.
     const outcomes = await launchAllTogether(RACERS);

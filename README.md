@@ -28,6 +28,20 @@ journal** format.
 Requires Node >= 22, matching the pinned `better-sqlite3` 13.0.3 (bundled SQLite 3.53.4).
 `package.json`, the lockfile root and the runtime all state the same boundary.
 
+### CPU architectures
+
+`package.json` and the lockfile root declare `cpu: ["x64", "arm64"]`. What that declaration
+does and does not mean:
+
+| | |
+|---|---|
+| **Tested** | `darwin-arm64` (development machine) and `linux-x64` (CI runner) |
+| **Prebuilt binary ships, not tested here** | `darwin-x64`, `linux-arm64`, and the musl variants `linuxmusl-x64`, `linuxmusl-arm64` |
+| **Not supported this round** | every other CPU. The driver's loader falls back to `build/Release/better_sqlite3.node`, and the package has `gypfile: false` with no install script, so a default `npm ci` produces no usable binding. A manual source build may work; it is untested and out of scope here |
+
+A shipped prebuilt binary is not evidence that a target was tested. Nothing here extends
+support to other platforms.
+
 ## Where this tool is meant to run
 
 `db:init` is approved for **a trusted local directory under the operator's control**, with no
@@ -72,17 +86,27 @@ than swallowed. The ordering and the failure propagation are tested. Whether a g
 filesystem and platform actually preserve the entry across a power loss is not tested and is
 not claimed.
 
-**A publication can succeed while its durability is unconfirmed.** The database file is
-flushed, then linked into place, then the parent directory is flushed, and only then is
-`applied` reported. If that last flush fails, the command exits non-zero with
-`E_PUBLISHED_NOT_SYNCED`: **the target exists, is a complete v1 database, and is deliberately
-not removed** — deleting a published database to simulate a rollback would destroy state this
-tool had already handed over. A later run will report `already_at`, but that only means the
-version is recognized; it is not evidence that the earlier flush reached the disk.
+**A publication can succeed while something after it fails.** Four facts are tracked
+separately and never stand for one another: whether this run published a target, whether the
+published name was afterwards confirmed to be the file this run built, whether the directory
+entry was flushed, and whether this run removed its own temporary file.
+
+| Outcome | Meaning |
+|---|---|
+| `E_PUBLISHED_IDENTITY_UNCONFIRMED` | published, but the name could not afterwards be confirmed as the verified file |
+| `E_PUBLISHED_NOT_SYNCED` | published and confirmed, but the directory entry was not flushed |
+| `E_TEMPORARY_NOT_REMOVED` | the operation itself completed, but this run could not remove its own temporary file. It says nothing about whether this run published anything — it is also reached after losing a race, where this run published nothing |
+
+**A published target is never removed on failure.** Deleting it to simulate a rollback would
+destroy state this tool had already handed over. A later run reporting `already_at` means the
+version is recognized; it is not evidence that any earlier flush reached the disk. A cleanup
+failure never overwrites one of the errors above, and never passes as success.
 
 **A killed process can leave a temporary database behind.** If this tool is killed with
 SIGKILL between creating its temporary file and cleaning it up, a `.dev-orch-init-*` file
-remains in the target's directory. Nothing reclaims it: this tool never deletes files it did
+remains in the target's directory. That is distinct from an ordinary cleanup failure, which
+is reported as `E_TEMPORARY_NOT_REMOVED` rather than passing silently. Nothing reclaims
+either: this tool never deletes files it did
 not create in the current run, and it never deletes another process's temporary files or an
 existing database. Removing a leftover is a manual decision.
 
@@ -94,10 +118,11 @@ npm test          # builds a CLI for the run; does not read or require dist/
 npm run build
 ```
 
-The migration checksum encoding is injective over well-formed strings, and a statement
-containing an unpaired surrogate is refused rather than silently replaced. That is a property
-of the encoding, not of SHA-256: no claim is made that a hash collision is mathematically
-impossible.
+The migration checksum accepts a positive safe-integer version and well-formed statements;
+anything else is refused rather than silently coerced. The encoding is injective over that
+domain — a property of the encoding, not of SHA-256: no claim is made that a hash collision
+is mathematically impossible. A1's only production caller is the frozen v1 constant, which
+cannot supply an illegal value.
 
 `npm test` and a bare `vitest run` are equivalent — the suite compiles what it needs into a
 directory belonging to that run and removes it afterwards, so it never depends on, and never

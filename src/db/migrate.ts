@@ -18,6 +18,7 @@ import Database from 'better-sqlite3';
 export const REASON_CODES = [
   'E_PLATFORM_UNSUPPORTED',
   'E_DB_ARG_MISSING',
+  'E_DB_ARG_REPEATED',
   'E_DB_PATH_NOT_ABSOLUTE',
   'E_DB_PATH_NOT_CANONICAL',
   'E_DB_PARENT_MISSING',
@@ -33,7 +34,9 @@ export const REASON_CODES = [
   'E_UNKNOWN_VERSION',
   'E_CHECKSUM_MISMATCH',
   'E_CREATE_FAILED',
+  'E_PUBLISHED_IDENTITY_UNCONFIRMED',
   'E_PUBLISHED_NOT_SYNCED',
+  'E_TEMPORARY_NOT_REMOVED',
   'E_INTERNAL',
 ] as const;
 
@@ -47,6 +50,7 @@ export type ReasonCode = (typeof REASON_CODES)[number];
 export const REASON_TEXT: Readonly<Record<ReasonCode, string>> = Object.freeze({
   E_PLATFORM_UNSUPPORTED: 'this platform is not supported; only Linux and macOS are',
   E_DB_ARG_MISSING: 'usage: dev-orch db:init --db <absolute-path>',
+  E_DB_ARG_REPEATED: '--db was given more than once; the intended database is ambiguous',
   E_DB_PATH_NOT_ABSOLUTE: 'the database path must be absolute',
   E_DB_PATH_NOT_CANONICAL: 'the database path must be canonical: no ".", "..", repeated or trailing separator',
   E_DB_PARENT_MISSING: 'the parent directory does not exist and is not created',
@@ -62,8 +66,15 @@ export const REASON_TEXT: Readonly<Record<ReasonCode, string>> = Object.freeze({
   E_UNKNOWN_VERSION: 'the recorded migration version is not version 1',
   E_CHECKSUM_MISMATCH: 'the recorded checksum does not match version 1',
   E_CREATE_FAILED: 'the database could not be created',
+  E_PUBLISHED_IDENTITY_UNCONFIRMED: 'the database was published but its identity could not be '
+    + 'confirmed afterwards; the target may exist and has not been removed',
   E_PUBLISHED_NOT_SYNCED: 'the database was published but its durability is unconfirmed; '
     + 'the target may exist and has not been removed',
+  // Deliberately says nothing about whether this run published or synced anything: it is
+  // also reached after losing a race, where this run published nothing and the winner's
+  // durability is not this run's to attest.
+  E_TEMPORARY_NOT_REMOVED: 'this runner could not remove its own temporary file; '
+    + 'no target was removed',
   E_INTERNAL: 'the command failed',
 });
 
@@ -80,9 +91,10 @@ export interface Migration {
 }
 
 /**
- * The one statement of version 1. SQLite stores a CREATE statement verbatim, so this exact
- * text is also what a recognized database reports back in sqlite_master.sql, which is how a
- * forged registry carrying extra constraints is refused.
+ * The one statement of version 1. SQLite normalizes a CREATE statement when it stores it,
+ * but the normalization is deterministic, so a database created from exactly this text
+ * reports exactly this text back in sqlite_master.sql — which is how a forged registry
+ * carrying extra constraints is refused.
  */
 export const V1_CREATE = 'CREATE TABLE schema_migrations (\n'
   + '  version INTEGER PRIMARY KEY,\n'
@@ -133,6 +145,14 @@ export function canonicalBytes(migration: Migration): Buffer {
   // an ill-formed statement is refused rather than silently rewritten. Encoding here is
   // injective over well-formed strings; SHA-256 collision resistance is a separate and
   // unproven assumption, not a mathematical impossibility.
+  // The legal input domain: a positive safe integer version, and well-formed statements.
+  // The version was interpolated unchecked, so 0 and -0, and 1 and '1', encoded identically.
+  // A1's only production caller is the frozen V1 constant, which cannot supply an illegal
+  // value; this closes the exported encoder rather than a reachable production path.
+  if (typeof migration.version !== 'number' || !Number.isSafeInteger(migration.version)
+    || migration.version < 1) {
+    throw new InitError('E_INTERNAL');
+  }
   for (const statement of migration.statements) {
     if (!isWellFormed(statement)) throw new InitError('E_INTERNAL');
   }
@@ -250,10 +270,10 @@ function classifyInOneSnapshot(db: Database.Database): InitOutcome {
     // The whole schema is compared, with no name predicate of any kind. A table such as
     // "sqliteXevil" is an ordinary extra object here and is refused like any other.
     //
-    // SQLite stores a CREATE statement verbatim, so comparing sqlite_master.sql to the
-    // exact v1 text settles every column name, declared type, NOT NULL, default, primary
-    // key, conflict clause and table constraint at once. A separate table_xinfo comparison
-    // was removed after mutation testing showed no input could ever make it fire.
+    // SQLite normalizes the CREATE statement it stores, deterministically, so comparing
+    // sqlite_master.sql to the exact v1 text settles every column name, declared type, NOT
+    // NULL, default, primary key, conflict clause and table constraint at once. A separate
+    // table_xinfo comparison was removed after mutation testing showed it could never fire.
     const only = master[0];
     if (master.length !== 1 || !only
       || only.type !== 'table' || only.name !== 'schema_migrations' || only.sql !== V1_CREATE) {
@@ -345,41 +365,84 @@ function refuseRecoverySidecars(dbPath: string): void {
  * because its POSIX semantics replace the destination silently.
  */
 function createAtomically(dbPath: string): InitOutcome {
-  // The temporary database lives in the target's own resolved directory, so link() stays
-  // within one filesystem and the publication is a rename-free, no-clobber operation.
+  // Four facts, recorded separately, because none of them stands for another: whether this
+  // run published a target, whether the published name was afterwards confirmed to be the
+  // inode this run verified, whether the directory entry was flushed, and whether this run
+  // managed to remove its own temporary file. A single exit reads them and decides.
+  //
+  // Every failure after publication used to collapse into whatever error happened to
+  // propagate — a post-link lstat failure surfaced as E_INTERNAL — and an exception from
+  // cleanup in `finally` replaced the error already in flight.
   const temporary = join(dirname(dbPath), `.dev-orch-init-${process.pid}-${randomUUID()}.tmp`);
+  let published = false;
+  let identityConfirmed = false;
+  let outcome: InitOutcome | undefined;
+  let primary: unknown;
+  let cleanupSucceeded: boolean;
+
   try {
     buildV1(temporary);
     const built = statSync(temporary);
     try {
+      // The temporary database lives in the target's own resolved directory, so link() stays
+      // within one filesystem and the publication is a rename-free, no-clobber operation.
       linkSync(temporary, dbPath);
+      published = true;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return classifyExisting(dbPath);
-      throw new InitError('E_CREATE_FAILED');
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw new InitError('E_CREATE_FAILED');
+      // Lost the race. This run published nothing; it reports on the winner's database and
+      // makes no claim about the winner's durability.
+      outcome = classifyExisting(dbPath);
     }
-    // Re-establish identity rather than trust the earlier checks: the published name must
-    // be a regular file, and the very inode this runner just verified.
-    const published = lstatSync(dbPath);
-    if (!published.isFile() || published.ino !== built.ino || published.dev !== built.dev) {
-      throw new InitError('E_CREATE_FAILED');
-    }
-    // The directory entry is flushed before success is reported, and a failure to flush is
-    // reported rather than swallowed. Real power-loss durability is filesystem-dependent and
-    // is not claimed.
-    //
-    // This failure is reported under its own code because it is not the same event as a
-    // failure before publication: the target now exists and is a valid v1 database. It is
-    // deliberately NOT removed — deleting a published database to simulate a rollback would
-    // destroy state this runner had already handed over.
-    try {
+    if (published) {
+      // Re-establish identity rather than trust the earlier checks: the published name must
+      // be a regular file, and the very inode this runner just verified.
+      const stat = lstatSync(dbPath);
+      if (!stat.isFile() || stat.ino !== built.ino || stat.dev !== built.dev) {
+        throw new InitError('E_PUBLISHED_IDENTITY_UNCONFIRMED');
+      }
+      identityConfirmed = true;
+      // The directory entry is flushed before success is reported. Real power-loss
+      // durability is filesystem-dependent and is not claimed. A published target is never
+      // removed on failure: deleting it to simulate a rollback would destroy state this
+      // runner had already handed over.
       fsyncPath(dirname(dbPath));
-    } catch {
-      throw new InitError('E_PUBLISHED_NOT_SYNCED');
+      outcome = { status: 'applied', version: V1.version, checksum: V1_CHECKSUM };
     }
-    return { status: 'applied', version: V1.version, checksum: V1_CHECKSUM };
+  } catch (error) {
+    primary = error;
   } finally {
-    for (const suffix of ['', ...SIDECAR_SUFFIXES]) rmSync(temporary + suffix, { force: true });
+    cleanupSucceeded = removeOwnTemporary(temporary);
   }
+
+  // One exit. A primary error keeps its meaning and carries the publication state with it;
+  // cleanup can never overwrite it. With no primary error, a cleanup failure is reported
+  // rather than silently succeeding.
+  if (primary !== undefined) throw describeFailure(primary, published, identityConfirmed);
+  if (!cleanupSucceeded) throw new InitError('E_TEMPORARY_NOT_REMOVED');
+  if (!outcome) throw new InitError('E_CREATE_FAILED');
+  return outcome;
+}
+
+/** Reports what this run actually did, not merely what threw. */
+function describeFailure(error: unknown, published: boolean, identityConfirmed: boolean): InitError {
+  if (!published) return error instanceof InitError ? error : new InitError('E_CREATE_FAILED');
+  if (!identityConfirmed) return new InitError('E_PUBLISHED_IDENTITY_UNCONFIRMED');
+  return new InitError('E_PUBLISHED_NOT_SYNCED');
+}
+
+/** Removes only this run's own temporary artifacts. Never throws, and never reports a
+ * failure as success. `force` already treats an absent file as removed. */
+function removeOwnTemporary(temporary: string): boolean {
+  let ok = true;
+  for (const suffix of ['', ...SIDECAR_SUFFIXES]) {
+    try {
+      rmSync(temporary + suffix, { force: true });
+    } catch {
+      ok = false;
+    }
+  }
+  return ok;
 }
 
 /**

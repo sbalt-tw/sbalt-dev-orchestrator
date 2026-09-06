@@ -18,22 +18,33 @@ function fail(code: ReasonCode): number {
   return 1;
 }
 
+/**
+ * Every rejection here happens before any database operation, so an ambiguous command line
+ * never creates anything. A repeated --db used to overwrite the previous value silently, so
+ * `--db /a --db /b` initialised /b, and `--db= --db=/b` even slipped past the empty-value
+ * refusal because the later value replaced the empty one before it was checked.
+ */
 function parseDbFlag(args: readonly string[]): string {
   let value: string | undefined;
+  const claim = (next: string | undefined): void => {
+    if (value !== undefined) throw new InitError('E_DB_ARG_REPEATED');
+    if (next === undefined || next === '' || next.startsWith('--')) {
+      throw new InitError('E_DB_ARG_MISSING');
+    }
+    value = next;
+  };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === '--db') {
-      const next = args[i + 1];
-      if (next === undefined || next.startsWith('--')) throw new InitError('E_DB_ARG_MISSING');
-      value = next;
+      claim(args[i + 1]);
       i += 1;
     } else if (arg !== undefined && arg.startsWith('--db=')) {
-      value = arg.slice('--db='.length);
+      claim(arg.slice('--db='.length));
     } else {
       throw new InitError('E_DB_ARG_MISSING');
     }
   }
-  if (value === undefined || value === '') throw new InitError('E_DB_ARG_MISSING');
+  if (value === undefined) throw new InitError('E_DB_ARG_MISSING');
   return value;
 }
 

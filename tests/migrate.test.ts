@@ -632,21 +632,6 @@ describe('the synchronisation steps that precede a success report', () => {
     expect(entries()).toEqual([]);
   });
 
-  it('reports a failure, not applied, when flushing the directory fails', async () => {
-    const { initialise: fresh, InitError: FreshError } = await importWithFsync((target) => {
-      if (target === realpathSync(dir)) throw new Error('injected sync failure');
-    });
-    let code: string | undefined;
-    try {
-      fresh(dbPath);
-    } catch (error) {
-      code = error instanceof FreshError ? error.code : 'WRONG_TYPE';
-    }
-    // A distinct outcome from a pre-publication failure: the link already existed when the
-    // flush failed, so the database is present and is deliberately not removed.
-    expect(code).toBe('E_PUBLISHED_NOT_SYNCED');
-    expect(entries()).toEqual(['orchestrator.sqlite']);
-  });
 });
 
 // F2, fault-injection evidence. A sidecar whose lstat fails for a reason other than ENOENT
@@ -835,5 +820,203 @@ describe('an unsupported platform', () => {
     expect(process.platform).not.toBe('win32');
     // No database, no temporary file, nothing.
     expect(entries()).toEqual([]);
+  });
+});
+
+// Four facts are recorded separately — published, identity confirmed, synced, temporary
+// removed — and one exit reads them. None may stand for another, cleanup may never overwrite
+// a primary error, and a cleanup failure on an otherwise successful run may not pass as
+// success. A published target is never deleted to simulate a rollback.
+describe('what this run actually did', () => {
+  afterEach(() => { vi.doUnmock('node:fs'); vi.resetModules(); });
+
+  interface Injection {
+    failLstatAfterLink?: boolean;
+    breakIdentity?: boolean;
+    failDirectorySync?: boolean;
+    failCleanup?: boolean;
+    publishWinnerBeforeLink?: string;
+  }
+
+  async function initialiseWith(injection: Injection): Promise<string> {
+    vi.resetModules();
+    vi.doMock('node:fs', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:fs')>();
+      const paths = new Map<number, string>();
+      let linked = false;
+      return {
+        ...actual,
+        linkSync(from: string, to: string) {
+          // The controlled interleaving: a legitimate competitor publishes first, then the
+          // real linkSync runs and produces a real EEXIST — the error is not faked.
+          if (injection.publishWinnerBeforeLink && !linked) {
+            actual.copyFileSync(injection.publishWinnerBeforeLink, to);
+          }
+          linked = true;
+          return actual.linkSync(from, to);
+        },
+        lstatSync(target: string, options?: unknown) {
+          if (injection.failLstatAfterLink && linked && target === join(realpathSync(dir), 'orchestrator.sqlite')) {
+            throw new Error('injected post-link lstat failure');
+          }
+          const stat = (actual.lstatSync as (t: string, o?: unknown) => { ino: number })(target, options);
+          if (injection.breakIdentity && linked && target === join(realpathSync(dir), 'orchestrator.sqlite')) {
+            return { ...stat, isFile: () => true, ino: stat.ino + 1 };
+          }
+          return stat;
+        },
+        openSync(target: string, flags: string) {
+          const fd = actual.openSync(target, flags);
+          paths.set(fd, target);
+          return fd;
+        },
+        fsyncSync(fd: number) {
+          if (injection.failDirectorySync && paths.get(fd) === realpathSync(dir)) {
+            throw new Error('injected directory sync failure');
+          }
+          return actual.fsyncSync(fd);
+        },
+        rmSync(target: string, options?: unknown) {
+          if (injection.failCleanup && target.includes('.dev-orch-init-')) {
+            throw new Error('injected cleanup failure');
+          }
+          return (actual.rmSync as (t: string, o?: unknown) => void)(target, options);
+        },
+      };
+    });
+    const { initialise: fresh, InitError: FreshError } = await import('../src/db/migrate.js');
+    try {
+      return fresh(dbPath).status;
+    } catch (error) {
+      return error instanceof FreshError ? error.code : `NOT_AN_INIT_ERROR:${String(error)}`;
+    }
+  }
+
+  it('reports an unconfirmed identity when the post-link lstat fails, and keeps the target', async () => {
+    expect(await initialiseWith({ failLstatAfterLink: true })).toBe('E_PUBLISHED_IDENTITY_UNCONFIRMED');
+    expect(entries()).toEqual(['orchestrator.sqlite']);
+  });
+
+  it('reports an unconfirmed identity when the published inode is not the verified one', async () => {
+    expect(await initialiseWith({ breakIdentity: true })).toBe('E_PUBLISHED_IDENTITY_UNCONFIRMED');
+    expect(entries()).toEqual(['orchestrator.sqlite']);
+  });
+
+  it('reports an unconfirmed sync when the directory flush fails, and keeps the target', async () => {
+    expect(await initialiseWith({ failDirectorySync: true })).toBe('E_PUBLISHED_NOT_SYNCED');
+    expect(entries()).toEqual(['orchestrator.sqlite']);
+    const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    expect(db.prepare('SELECT version FROM schema_migrations').all()).toEqual([{ version: 1 }]);
+    db.close();
+  });
+
+  it('does not pass off a cleanup failure as success on an otherwise complete run', async () => {
+    expect(await initialiseWith({ failCleanup: true })).toBe('E_TEMPORARY_NOT_REMOVED');
+    // The database really was published; only this run's temporary file survived.
+    expect(entries()).toContain('orchestrator.sqlite');
+    expect(entries().some((name) => name.startsWith('.dev-orch-init-'))).toBe(true);
+  });
+
+  it('keeps the primary error when cleanup also fails', async () => {
+    // Sync failed *and* cleanup failed: the published-state error wins, and the run is not
+    // reported as merely "temporary not removed".
+    expect(await initialiseWith({ failDirectorySync: true, failCleanup: true }))
+      .toBe('E_PUBLISHED_NOT_SYNCED');
+    expect(entries()).toContain('orchestrator.sqlite');
+  });
+});
+
+// The race proof, at the production entry point, with real file operations. The entry sees
+// an absent target, this run builds its own temporary database, and only then does a
+// legitimate competitor publish — so the EEXIST is real, not simulated.
+//
+// This is evidence for a controlled interleaving, not for every possible multi-process
+// schedule. The parallel smoke in race.test.ts covers realistic concurrency separately.
+describe('losing a publication race', () => {
+  afterEach(() => { vi.doUnmock('node:fs'); vi.resetModules(); });
+
+  async function raceAgainstWinner(failCleanup: boolean): Promise<{ result: string; hits: number }> {
+    // A real v1 database, built by production, staged outside the target directory.
+    const staging = mkdtempSync(join(tmpdir(), 'a1-winner-'));
+    const winner = join(staging, 'winner.sqlite');
+    initialise(winner);
+    let hits = 0;
+    vi.resetModules();
+    vi.doMock('node:fs', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:fs')>();
+      let linked = false;
+      return {
+        ...actual,
+        linkSync(from: string, to: string) {
+          if (!linked) {
+            hits += 1;
+            actual.copyFileSync(winner, to);
+          }
+          linked = true;
+          return actual.linkSync(from, to);
+        },
+        rmSync(target: string, options?: unknown) {
+          if (failCleanup && target.includes('.dev-orch-init-')) throw new Error('injected cleanup failure');
+          return (actual.rmSync as (t: string, o?: unknown) => void)(target, options);
+        },
+      };
+    });
+    const { initialise: fresh, InitError: FreshError } = await import('../src/db/migrate.js');
+    let result: string;
+    try {
+      result = fresh(dbPath).status;
+    } catch (error) {
+      result = error instanceof FreshError ? error.code : `NOT_AN_INIT_ERROR:${String(error)}`;
+    }
+    const winnerDigest = digest(winner);
+    rmSync(staging, { recursive: true, force: true });
+    expect(digest(dbPath)).toBe(winnerDigest);
+    return { result, hits };
+  }
+
+  it('recognizes the winner, leaves its bytes alone, and cleans up after itself', async () => {
+    const { result, hits } = await raceAgainstWinner(false);
+    // The control point fired and a real EEXIST followed.
+    expect(hits).toBe(1);
+    expect(result).toBe('already_at');
+    expect(entries()).toEqual(['orchestrator.sqlite']);
+  });
+
+  it('does not silently report already_at when its own cleanup fails', async () => {
+    const { result, hits } = await raceAgainstWinner(true);
+    expect(hits).toBe(1);
+    // Not already_at, and the code says nothing about this run having published or synced.
+    expect(result).toBe('E_TEMPORARY_NOT_REMOVED');
+    expect(entries()).toContain('orchestrator.sqlite');
+    expect(entries().some((name) => name.startsWith('.dev-orch-init-'))).toBe(true);
+  });
+});
+
+describe('the checksum version domain', () => {
+  it.each([
+    ['zero', 0],
+    ['negative zero', -0],
+    ['a negative version', -1],
+    ['a fractional version', 1.5],
+    ['a string that looks like a version', '1'],
+  ])('refuses %s', (_label, version) => {
+    expectCode(() => checksumOf({ version: version as number, statements: ['X'] }), 'E_INTERNAL');
+  });
+
+  it('leaves the released v1 identity untouched', () => {
+    expect(checksumOf(V1)).toBe(V1_CHECKSUM);
+    expect(V1_CHECKSUM).toBe('f2e2aa4ad993a7b4562db35e1e1196dd4843470440e36b942dc87843ef6782c8');
+  });
+});
+
+describe('the declared install boundary', () => {
+  it('states the same platform and cpu in the manifest and the lockfile root', () => {
+    const manifest = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'package.json'), 'utf8')) as
+      { os: string[]; cpu: string[] };
+    const lock = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'package-lock.json'), 'utf8')) as
+      { packages: Record<string, { os?: string[]; cpu?: string[] }> };
+    expect(manifest.cpu).toEqual(['x64', 'arm64']);
+    expect(lock.packages['']?.os).toEqual(manifest.os);
+    expect(lock.packages['']?.cpu).toEqual(manifest.cpu);
   });
 });

@@ -97,3 +97,34 @@ describe('the compiled command line', () => {
     expect(result.stderr).not.toContain('injected-marker-9f3a');
   });
 });
+
+// An ambiguous command line is refused before any database work, so neither candidate path
+// is created. `--db /a --db /b` used to initialise /b, and `--db= --db=/b` even slipped past
+// the empty-value refusal.
+describe('an ambiguous --db', () => {
+  it.each([
+    ['two spaced forms', (a: string, b: string) => ['db:init', '--db', a, '--db', b]],
+    ['two joined forms', (a: string, b: string) => ['db:init', `--db=${a}`, `--db=${b}`]],
+    ['mixed forms', (a: string, b: string) => ['db:init', '--db', a, `--db=${b}`]],
+    ['an empty value first', (a: string, b: string) => ['db:init', '--db=', `--db=${b}`]],
+  ])('refuses %s and creates neither path', (_label, build) => {
+    const first = join(dir, 'first.sqlite');
+    const second = join(dir, 'second.sqlite');
+    const result = runCli(build(first, second));
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr.trim()).toMatch(/^db:init error=E_DB_ARG_(REPEATED|MISSING) /);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it('names the repetition rather than the usage when --db is given twice', () => {
+    const result = runCli(['db:init', '--db', join(dir, 'a.sqlite'), '--db', join(dir, 'b.sqlite')]);
+    expect(result.stderr.trim())
+      .toBe('db:init error=E_DB_ARG_REPEATED --db was given more than once; the intended database is ambiguous');
+  });
+
+  it('refuses an empty value on its own', () => {
+    expect(runCli(['db:init', '--db=']).stderr).toContain('E_DB_ARG_MISSING');
+    expect(readdirSync(dir)).toEqual([]);
+  });
+});

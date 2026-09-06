@@ -11,6 +11,10 @@
     "linux",
     "darwin"
   ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
   "bin": {
     "dev-orch": "./dist/cli/index.js"
   },
