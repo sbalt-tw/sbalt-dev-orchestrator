@@ -9,7 +9,9 @@
 // accepts no SQL, no migration and no fault-injection payload from a caller.
 
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, linkSync, lstatSync, realpathSync, rmSync, statSync } from 'node:fs';
+import {
+  closeSync, fsyncSync, linkSync, lstatSync, openSync, realpathSync, rmSync, statSync,
+} from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize, sep } from 'node:path';
 import Database from 'better-sqlite3';
 
@@ -20,6 +22,7 @@ export const REASON_CODES = [
   'E_DB_PARENT_MISSING',
   'E_DB_TARGET_NOT_REGULAR_FILE',
   'E_DB_NOT_SQLITE',
+  'E_DB_BUSY',
   'E_DB_EMPTY_FILE',
   'E_DB_RECOVERY_REQUIRED',
   'E_FOREIGN_KEYS_NOT_ENABLED',
@@ -45,6 +48,7 @@ export const REASON_TEXT: Readonly<Record<ReasonCode, string>> = Object.freeze({
   E_DB_PARENT_MISSING: 'the parent directory does not exist and is not created',
   E_DB_TARGET_NOT_REGULAR_FILE: 'the target exists and is not a regular file',
   E_DB_NOT_SQLITE: 'the path is not a readable SQLite database',
+  E_DB_BUSY: 'the database is locked by another process; retrying later may succeed',
   E_DB_EMPTY_FILE: 'the path exists but holds no schema',
   E_DB_RECOVERY_REQUIRED: 'the database has journal or write-ahead sidecars and needs recovery',
   E_FOREIGN_KEYS_NOT_ENABLED: 'foreign key enforcement could not be confirmed',
@@ -136,6 +140,19 @@ export interface InitOutcome {
 }
 
 interface MasterRow { type: string; name: string; sql: string | null }
+
+/**
+ * F9. A database held by another process is valid, not malformed. Contention is reported
+ * under its own retryable code instead of being flattened into "not a SQLite database" or
+ * escaping as an unclassified failure.
+ */
+function classifyDriverFailure(error: unknown): InitError {
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === 'string' && (code.startsWith('SQLITE_BUSY') || code.startsWith('SQLITE_LOCKED'))) {
+    return new InitError('E_DB_BUSY');
+  }
+  return new InitError('E_DB_NOT_SQLITE');
+}
 interface RegistryRow { version: unknown; checksum: unknown }
 
 /** Sidecars that mean the database is mid-transaction or in a mode this runner never uses. */
@@ -148,9 +165,7 @@ const SIDECAR_SUFFIXES = ['-journal', '-wal', '-shm'] as const;
  * reports from this same read-only connection.
  */
 function classifyExisting(dbPath: string): InitOutcome {
-  for (const suffix of SIDECAR_SUFFIXES) {
-    if (existsSync(dbPath + suffix)) throw new InitError('E_DB_RECOVERY_REQUIRED');
-  }
+  refuseRecoverySidecars(dbPath);
   // lstat, never stat: a symlink in the target position is refused as a target kind, and
   // is never resolved and classified as though it were the database itself.
   const stat = lstatSync(dbPath);
@@ -160,15 +175,34 @@ function classifyExisting(dbPath: string): InitOutcome {
   let db: Database.Database;
   try {
     db = new Database(dbPath, { readonly: true, fileMustExist: true });
-  } catch {
-    throw new InitError('E_DB_NOT_SQLITE');
+  } catch (error) {
+    throw classifyDriverFailure(error);
+  }
+  try {
+    return classifyInOneSnapshot(db);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * F3. The schema and the registry are read inside one explicit read transaction, so they
+ * describe a single state of the database. Read as two autocommit statements they did not:
+ * a writer could commit between them, and the classifier could combine the schema of one
+ * state with the version row of another and accept a database that was never valid.
+ */
+function classifyInOneSnapshot(db: Database.Database): InitOutcome {
+  try {
+    db.exec('BEGIN DEFERRED');
+  } catch (error) {
+    throw classifyDriverFailure(error);
   }
   try {
     let master: MasterRow[];
     try {
       master = db.prepare('SELECT type, name, sql FROM sqlite_master').all() as MasterRow[];
-    } catch {
-      throw new InitError('E_DB_NOT_SQLITE');
+    } catch (error) {
+      throw classifyDriverFailure(error);
     }
 
     // The whole schema is compared, with no name predicate of any kind. A table such as
@@ -184,14 +218,43 @@ function classifyExisting(dbPath: string): InitOutcome {
       throw new InitError('E_UNKNOWN_SCHEMA');
     }
 
-    const rows = db.prepare('SELECT version, checksum FROM schema_migrations').all() as RegistryRow[];
+    let rows: RegistryRow[];
+    try {
+      rows = db.prepare('SELECT version, checksum FROM schema_migrations').all() as RegistryRow[];
+    } catch (error) {
+      throw classifyDriverFailure(error);
+    }
     const row = rows[0];
     if (rows.length !== 1 || !row) throw new InitError('E_REGISTRY_MALFORMED');
     if (row.version !== V1.version) throw new InitError('E_UNKNOWN_VERSION');
     if (row.checksum !== V1_CHECKSUM) throw new InitError('E_CHECKSUM_MISMATCH');
     return { status: 'already_at', version: V1.version, checksum: V1_CHECKSUM };
   } finally {
-    db.close();
+    // A read transaction holds only a shared lock, and ending it promptly is what lets a
+    // waiting writer proceed instead of contending with a classifier that has already
+    // finished reading.
+    db.exec('COMMIT');
+  }
+}
+
+/**
+ * F2. Recovery sidecars are refused before the branch between classification and creation.
+ * They used to be checked only when the target already existed, so a directory holding a
+ * stale `-journal` beside an absent database reported `applied` on the first run and
+ * `E_DB_RECOVERY_REQUIRED` on the second — the one promised capability, broken.
+ *
+ * Only ENOENT counts as absence: a dangling sidecar symlink, or a metadata error, refuses
+ * rather than failing open.
+ */
+function refuseRecoverySidecars(dbPath: string): void {
+  for (const suffix of SIDECAR_SUFFIXES) {
+    try {
+      lstatSync(dbPath + suffix);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      throw new InitError('E_DB_RECOVERY_REQUIRED');
+    }
+    throw new InitError('E_DB_RECOVERY_REQUIRED');
   }
 }
 
@@ -221,6 +284,10 @@ function createAtomically(dbPath: string): InitOutcome {
     if (!published.isFile() || published.ino !== built.ino || published.dev !== built.dev) {
       throw new InitError('E_CREATE_FAILED');
     }
+    // F10. The directory entry is flushed before success is reported, and a failure to
+    // flush is reported as a failure rather than swallowed. Real power-loss durability is
+    // filesystem-dependent and is not claimed.
+    fsyncPath(dirname(dbPath));
     return { status: 'applied', version: V1.version, checksum: V1_CHECKSUM };
   } finally {
     for (const suffix of ['', ...SIDECAR_SUFFIXES]) rmSync(temporary + suffix, { force: true });
@@ -228,19 +295,33 @@ function createAtomically(dbPath: string): InitOutcome {
 }
 
 /**
- * The one production migration transaction: the schema object and the version row commit
- * together or not at all. `betweenStatements` exists so a test can fail the second
- * statement after the first has succeeded and observe that neither survives; it carries no
- * SQL, no migration and no registry, production passes nothing, and this module is not a
- * package entry point — the only runtime entry point is the CLI, which calls buildV1.
+ * F6. The one production migration transaction: the schema object and the version row
+ * commit together or not at all. It is not exported and takes no callback — a test observes
+ * rollback on the real connection instead of being handed an injection seam.
  */
-export function runV1Transaction(db: Database.Database, betweenStatements?: () => void): void {
+function runV1Transaction(db: Database.Database): void {
   db.transaction(() => {
     db.exec(V1_CREATE);
-    if (betweenStatements) betweenStatements();
     db.prepare('INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)')
       .run(V1.version, V1_CHECKSUM, new Date().toISOString());
   })();
+}
+
+/** Flushes one path's own metadata. Any failure propagates; nothing here reports success. */
+function fsyncPath(target: string): void {
+  let fd: number;
+  try {
+    fd = openSync(target, 'r');
+  } catch {
+    throw new InitError('E_CREATE_FAILED');
+  }
+  try {
+    fsyncSync(fd);
+  } catch {
+    throw new InitError('E_CREATE_FAILED');
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function buildV1(temporary: string): void {
@@ -261,6 +342,9 @@ function buildV1(temporary: string): void {
     throw error instanceof InitError ? error : new InitError('E_CREATE_FAILED');
   }
   db.close();
+  // F10. Flush the file's own contents, then let classification confirm the shape. The
+  // parent directory entry is flushed later, once the name has been published.
+  fsyncPath(temporary);
   // Publish only what this runner can itself recognize as the exact v1 shape.
   classifyExisting(temporary);
 }
@@ -272,6 +356,9 @@ function buildV1(temporary: string): void {
  */
 export function initialise(dbPath: string): InitOutcome {
   const target = canonicalTarget(dbPath);
+  // Before choosing a branch: a recovery sidecar disqualifies the target whether or not the
+  // database itself is there.
+  refuseRecoverySidecars(target);
   // lstat decides existence, so a dangling symlink counts as an occupied target and is
   // refused by kind rather than falling through to creation.
   let occupied = true;
@@ -293,7 +380,12 @@ function canonicalTarget(dbPath: string): string {
   if (dbPath === '' || !isAbsolute(dbPath)) throw new InitError('E_DB_PATH_NOT_ABSOLUTE');
   // normalize() collapses ".", ".." and repeated separators but keeps a trailing one, so
   // these two comparisons together reject every non-canonical spelling.
-  if (dbPath !== normalize(dbPath) || dbPath.endsWith(sep)) {
+  //
+  // F1. Canonical also means "the name this runner uses is the name the driver opens".
+  // better-sqlite3 trims the filename before handing it to SQLite, so a path with leading
+  // or trailing whitespace was linked under one name and opened under another: the first
+  // run reported applied and the second could not find, or could misidentify, the database.
+  if (dbPath !== normalize(dbPath) || dbPath.endsWith(sep) || dbPath !== dbPath.trim()) {
     throw new InitError('E_DB_PATH_NOT_CANONICAL');
   }
   // No basename check: normalize() collapses "." and "..", "/" is the only path with an

@@ -35,11 +35,13 @@ jobs:
           printf 'checked out head : %s\n' "$actual"
           printf 'event head       : %s\n' "$EVENT_HEAD"
           [ "$actual" = "$EVENT_HEAD" ] || { echo "::error::checkout is not the reviewed head"; exit 1; }
+          # The head assertion above is the identity check. The base and merge-base are
+          # recorded for the reviewer; they are deliberately NOT required to be equal. An
+          # earlier revision did require it, which silently imposed a repository-wide
+          # "branch must be rebased" policy on every future pull request.
           git fetch --no-tags origin "$EVENT_BASE"
-          mb=$(git merge-base "$EVENT_BASE" HEAD)
           printf 'declared base    : %s\n' "$EVENT_BASE"
-          printf 'merge-base       : %s\n' "$mb"
-          [ "$mb" = "$EVENT_BASE" ] || { echo "::error::merge-base is not the declared base"; exit 1; }
+          printf 'merge-base       : %s\n' "$(git merge-base "$EVENT_BASE" HEAD)"
           printf 'head tree        : %s\n' "$(git rev-parse 'HEAD^{tree}')"
 
       - uses: actions/setup-node@v4
@@ -55,6 +57,11 @@ jobs:
           printf 'bundled sqlite   : %s\n' "$sqlite"
           [ "$installed" = "13.0.3" ] || { echo "::error::better-sqlite3 is not the pinned 13.0.3"; exit 1; }
           [ "$sqlite" = "3.53.4" ] || { echo "::error::bundled SQLite is not 3.53.4"; exit 1; }
+          # F5. The project floor must match what the locked dependency actually declares.
+          declared=$(node -p "require('./package.json').engines.node")
+          required=$(node -p "require('better-sqlite3/package.json').engines.node")
+          printf 'engines.node     : project %s / dependency %s\n' "$declared" "$required"
+          [ "$declared" = "$required" ] || { echo "::error::engines.node does not match the pinned driver"; exit 1; }
       - name: Typecheck
         run: npm run typecheck
       - name: Lint
@@ -99,15 +106,28 @@ jobs:
           if node dist/cli/index.js db:init --db "$work/empty.sqlite"; then exit 1; fi
           [ ! -s "$work/empty.sqlite" ] || { echo "::error::a refused empty file was written to"; exit 1; }
 
-          # Independent processes, started together against one fresh path.
-          race="$work/race.sqlite"
-          for _ in 1 2 3 4 5 6; do
-            node dist/cli/index.js db:init --db "$race" >>"$work/race.out" 2>>"$work/race.err" &
+          # Independent processes, started together against one fresh path. Every racer must
+          # exit cleanly: an earlier revision counted only the creator, so five failures
+          # would have passed.
+          race="$work/racedir/race.sqlite"
+          mkdir -p "$work/racedir"
+          pids=""
+          for i in 1 2 3 4 5 6; do
+            node dist/cli/index.js db:init --db "$race" >"$work/race.$i.out" 2>"$work/race.$i.err" &
+            pids="$pids $!"
           done
-          wait
-          applied=$(grep -c 'result=applied' "$work/race.out" || true)
-          printf 'race: %s process(es) created the database\n' "$applied"
+          rc=0
+          for p in $pids; do wait "$p" || rc=1; done
+          [ "$rc" = "0" ] || { echo "::error::a racer exited non-zero"; exit 1; }
+
+          applied=$(cat "$work"/race.*.out | grep -c 'result=applied')
+          already=$(cat "$work"/race.*.out | grep -c 'result=already_at')
+          errbytes=$(cat "$work"/race.*.err | wc -c | tr -d ' ')
+          printf 'race: applied=%s already_at=%s stderr_bytes=%s\n' "$applied" "$already" "$errbytes"
           [ "$applied" = "1" ] || { echo "::error::the race did not produce exactly one creator"; exit 1; }
-          [ "$(ls "$work" | grep -c '^race.sqlite')" = "1" ] \
-            || { echo "::error::the race left extra files beside the target"; exit 1; }
+          [ "$already" = "5" ] || { echo "::error::the race did not produce five already_at"; exit 1; }
+          [ "$errbytes" = "0" ] || { echo "::error::a racer wrote to stderr"; exit 1; }
+          # ls -A, so a hidden leftover temporary database is counted too.
+          leftover=$(ls -A "$work/racedir" | grep -cv '^race.sqlite$' || true)
+          [ "$leftover" = "0" ] || { echo "::error::the race left files beside the target"; ls -A "$work/racedir"; exit 1; }
           echo "compiled CLI smoke passed"

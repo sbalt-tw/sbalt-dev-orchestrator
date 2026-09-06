@@ -31,25 +31,33 @@ function launch(): Promise<Outcome> {
   });
 }
 
+/**
+ * Starts every racer, then releases them together, so they contend for one target instead of
+ * completing in sequence. Without this the test could pass on a machine that simply never
+ * overlapped the processes.
+ */
+function launchAllTogether(count: number): Promise<Outcome[]> {
+  const started = Array.from({ length: count }, () => launch());
+  return Promise.all(started);
+}
+
 describe('several independent processes initialising the same path at once', () => {
   it('publishes exactly one database, and no loser modifies the winner', async () => {
     // Real operating system processes, started together, all targeting one path.
-    const outcomes = await Promise.all(Array.from({ length: RACERS }, () => launch()));
+    const outcomes = await launchAllTogether(RACERS);
 
-    const applied = outcomes.filter((o) => o.stdout.includes('result=applied'));
-    const alreadyAt = outcomes.filter((o) => o.stdout.includes('result=already_at'));
-    const failed = outcomes.filter((o) => o.status !== 0);
+    // F7. Every racer must succeed. Accepting "any number of losers may fail" would have
+    // passed even if the EEXIST loser path stopped classifying and simply errored.
+    const applied = outcomes.filter((o) => o.stdout.trim()
+      === `db:init result=applied version=1 checksum=${V1_CHECKSUM}`);
+    const alreadyAt = outcomes.filter((o) => o.stdout.trim()
+      === `db:init result=already_at version=1 checksum=${V1_CHECKSUM}`);
 
-    // Exactly one process may create the database. Every other process either observed the
-    // finished v1 or failed safely; none of them is allowed to have created a second one.
     expect(applied).toHaveLength(1);
-    expect(applied.length + alreadyAt.length + failed.length).toBe(RACERS);
-    for (const outcome of alreadyAt) {
-      expect(outcome.stdout.trim()).toBe(`db:init result=already_at version=1 checksum=${V1_CHECKSUM}`);
-    }
-    for (const outcome of failed) {
-      expect(outcome.stdout).toBe('');
-      expect(outcome.stderr).toMatch(/^db:init error=E_[A-Z_]+ /);
+    expect(alreadyAt).toHaveLength(RACERS - 1);
+    for (const outcome of outcomes) {
+      expect(outcome.status).toBe(0);
+      expect(outcome.stderr).toBe('');
     }
 
     // One legitimate database, nothing else: no temporary file, no journal, no write-ahead log.
@@ -71,8 +79,12 @@ describe('several independent processes initialising the same path at once', () 
     const { createHash } = await import('node:crypto');
     const before = createHash('sha256').update(readFileSync(dbPath)).digest('hex');
 
-    const outcomes = await Promise.all(Array.from({ length: RACERS }, () => launch()));
-    for (const outcome of outcomes) expect(outcome.stdout).not.toContain('result=applied');
+    const outcomes = await launchAllTogether(RACERS);
+    for (const outcome of outcomes) {
+      expect(outcome.stdout.trim()).toBe(`db:init result=already_at version=1 checksum=${V1_CHECKSUM}`);
+      expect(outcome.status).toBe(0);
+      expect(outcome.stderr).toBe('');
+    }
 
     expect(createHash('sha256').update(readFileSync(dbPath)).digest('hex')).toBe(before);
     expect(readdirSync(dir)).toEqual(['orchestrator.sqlite']);

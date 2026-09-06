@@ -1,16 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync,
-  statSync, symlinkSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync,
+  rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
 import {
-  initialise, runV1Transaction, InitError, canonicalBytes, checksumOf,
+  initialise, InitError, canonicalBytes, checksumOf,
   CHECKSUM_ALGORITHM, V1, V1_CHECKSUM, V1_CREATE,
 } from '../src/db/migrate.js';
 
@@ -129,20 +129,25 @@ describe('refusing an existing target without touching it', () => {
     expect(entries()).toEqual(['orchestrator.sqlite']);
   });
 
-  it('refuses a target that has a rollback journal beside it, without opening it', () => {
-    initialise(dbPath);
-    writeFileSync(`${dbPath}-journal`, 'pretend this is a hot journal');
-    const before = digest(dbPath);
-    const journalBefore = digest(`${dbPath}-journal`);
-    expectCode(() => initialise(dbPath), 'E_DB_RECOVERY_REQUIRED');
-    expect(digest(dbPath)).toBe(before);
-    expect(digest(`${dbPath}-journal`)).toBe(journalBefore);
-  });
-
   it('refuses a target that has a write-ahead log beside it', () => {
     initialise(dbPath);
     writeFileSync(`${dbPath}-wal`, '');
     expectCode(() => initialise(dbPath), 'E_DB_RECOVERY_REQUIRED');
+  });
+
+  // F2. The sidecar check used to live only in the existing-target branch, so a stale
+  // sidecar beside an absent database was ignored: the first run reported applied and the
+  // second refused. The one promised capability — run it twice — was broken.
+  it.each(['-journal', '-wal', '-shm'])('refuses an absent target with a stale %s beside it', (suffix) => {
+    writeFileSync(dbPath + suffix, 'stale recovery artifact');
+    expectCode(() => initialise(dbPath), 'E_DB_RECOVERY_REQUIRED');
+    expect(entries()).toEqual([`orchestrator.sqlite${suffix}`]);
+  });
+
+  it('refuses a dangling sidecar symlink rather than treating it as absent', () => {
+    symlinkSync(join(dir, 'gone'), `${dbPath}-journal`);
+    expectCode(() => initialise(dbPath), 'E_DB_RECOVERY_REQUIRED');
+    expect(existsSync(dbPath)).toBe(false);
   });
 
   // The production classifier applies no name predicate at all, so this table is an
@@ -153,11 +158,6 @@ describe('refusing an existing target without touching it', () => {
     const before = digest(dbPath);
     expectCode(() => initialise(dbPath), 'E_UNKNOWN_SCHEMA');
     expect(digest(dbPath)).toBe(before);
-  });
-
-  it('refuses a database whose only object is a table named like a SQLite internal one', () => {
-    seed(dbPath, ['CREATE TABLE sqliteXstat (a TEXT)']);
-    expectCode(() => initialise(dbPath), 'E_UNKNOWN_SCHEMA');
   });
 
   it('refuses a genuine SQLite internal object created by AUTOINCREMENT', () => {
@@ -263,6 +263,8 @@ describe('the path contract', () => {
   it.each([
     ['a relative path', 'relative.sqlite'],
     ['the empty string', ''],
+    // A leading space is refused one check earlier: such a path is not absolute at all.
+    ['a leading space', ' /tmp/db.sqlite'],
   ])('refuses %s', (_label, path) => expectCode(() => initialise(path), 'E_DB_PATH_NOT_ABSOLUTE'));
 
   it.each([
@@ -272,6 +274,10 @@ describe('the path contract', () => {
     ['a trailing separator', (d: string) => `${d}/db.sqlite/`],
     ['a "." basename', (d: string) => `${d}/.`],
     ['a ".." basename', (d: string) => `${d}/..`],
+    // F1. better-sqlite3 trims the filename before opening, so these spellings name one
+    // file to link() and a different one to SQLite.
+    ['a trailing space', (d: string) => `${d}/db.sqlite `],
+    ['a trailing tab', (d: string) => `${d}/db.sqlite\t`],
   ])('refuses %s and creates nothing', (_label, build) => {
     mkdirSync(join(dir, 'sub'));
     expectCode(() => initialise(build(dir)), 'E_DB_PATH_NOT_CANONICAL');
@@ -339,27 +345,105 @@ describe('the path contract', () => {
   });
 });
 
-describe('the migration transaction, observed on the production executor', () => {
-  it('leaves neither the table nor the row when the second statement fails', () => {
-    const db = new Database(dbPath);
+// F6. The rollback proof runs through the real initialise. The production module exports no
+// seam and takes no callback, so the observation is made from the test side by intercepting
+// the driver: the INSERT is made to fail, and the connection is inspected at the moment
+// production closes it — before the temporary file is deleted. A test that merely checked
+// the directory afterwards passed whether or not a transaction existed, because cleanup
+// removed the evidence either way.
+describe('the migration transaction, observed on the production path', () => {
+  const proto = Database.prototype as unknown as {
+    prepare: (source: string) => unknown;
+    close: () => unknown;
+  };
+
+  function initialiseWithFailingInsert(): { snapshot: string[] | undefined; observed: boolean } {
+    const prepare = proto.prepare;
+    const close = proto.close;
+    let snapshot: string[] | undefined;
+    let observed = false;
+    proto.prepare = function patched(this: Database.Database, source: string): unknown {
+      if (source.startsWith('INSERT INTO schema_migrations')) throw new Error('injected');
+      return prepare.call(this, source);
+    };
+    proto.close = function patched(this: Database.Database): unknown {
+      if (this.open && !observed) {
+        observed = true;
+        snapshot = (prepare.call(this, 'SELECT name FROM sqlite_master') as { all(): { name: string }[] })
+          .all().map((r) => r.name);
+      }
+      return close.call(this);
+    };
     try {
-      expect(() => runV1Transaction(db, () => { throw new Error('injected between statements'); }))
-        .toThrow('injected between statements');
-      expect(db.prepare('SELECT type, name FROM sqlite_master').all()).toEqual([]);
+      expectCode(() => initialise(dbPath), 'E_CREATE_FAILED');
     } finally {
-      db.close();
+      proto.prepare = prepare;
+      proto.close = close;
     }
+    return { snapshot, observed };
+  }
+
+  it('rolls back on the production connection, observed before cleanup', () => {
+    const { snapshot, observed } = initialiseWithFailingInsert();
+    // The observation must actually have happened: an absent snapshot is a broken test, not
+    // a passing one, and an empty default would hide exactly the defect being checked.
+    expect(observed).toBe(true);
+    expect(snapshot).toBeDefined();
+    expect(snapshot).toEqual([]);
+    expect(entries()).toEqual([]);
   });
 
   it('commits both statements together when nothing fails', () => {
-    const db = new Database(dbPath);
+    initialise(dbPath);
+    const db = new Database(dbPath, { readonly: true, fileMustExist: true });
     try {
-      runV1Transaction(db);
       expect(db.prepare('SELECT name FROM sqlite_master').all()).toEqual([{ name: 'schema_migrations' }]);
       expect(db.prepare('SELECT version FROM schema_migrations').all()).toEqual([{ version: 1 }]);
     } finally {
       db.close();
     }
+  });
+});
+
+// F8. Two separate kinds of evidence, deliberately not conflated.
+describe('the classification connection is opened read-only', () => {
+  it('is proved on the real initialise path, by inspecting the live connection', () => {
+    initialise(dbPath);
+    const prepare = Database.prototype.prepare;
+    const modes: boolean[] = [];
+    (Database.prototype as unknown as { prepare: (s: string) => unknown }).prepare =
+      function patched(this: Database.Database, source: string): unknown {
+        modes.push(this.readonly);
+        return prepare.call(this, source);
+      };
+    try {
+      expect(initialise(dbPath).status).toBe('already_at');
+    } finally {
+      (Database.prototype as unknown as { prepare: (s: string) => unknown }).prepare = prepare;
+    }
+    // Every statement the classifier ran belonged to a read-only connection.
+    expect(modes.length).toBeGreaterThan(0);
+    expect(modes.every((readonly) => readonly)).toBe(true);
+  });
+
+  // CHARACTERIZATION EVIDENCE, not a product-entry proof. It records what the driver does to
+  // a crashed database when opened read-write. Production refuses this state earlier, at the
+  // sidecar check, so no product entry point reaches this code path.
+  it('characterization: a read-write open of a crashed empty database deletes its journal', () => {
+    const victim = join(dir, 'characterization.sqlite');
+    const crash = `const D=require(${JSON.stringify(BETTER_SQLITE3)});`
+      + 'const d=new D(process.argv[1]);'
+      + "d.exec('BEGIN IMMEDIATE');d.exec('CREATE TABLE half (a)');"
+      + "process.kill(process.pid,'SIGKILL');";
+    try {
+      execFileSync(process.execPath, ['-e', crash, victim], { stdio: 'ignore' });
+    } catch { /* killed on purpose */ }
+    expect(existsSync(`${victim}-journal`)).toBe(true);
+
+    const db = new Database(victim);
+    db.prepare('SELECT name FROM sqlite_master').all();
+    db.close();
+    expect(existsSync(`${victim}-journal`)).toBe(false);
   });
 });
 
@@ -384,5 +468,210 @@ describe('a database left mid-transaction by a killed process', () => {
     expect(digest(dbPath)).toBe(dbBefore);
     expect(digest(journal)).toBe(journalBefore);
     expect(entries()).toEqual(['orchestrator.sqlite', 'orchestrator.sqlite-journal']);
+  });
+});
+
+// F3. Two states, each individually ILLEGAL:
+//   state A — exactly the v1 schema, but the recorded checksum is wrong   -> E_CHECKSUM_MISMATCH
+//   state B — the correct checksum, but an extra object in the schema     -> E_UNKNOWN_SCHEMA
+// Reading the schema from A and the registry from B yields the exact v1 schema plus the
+// correct checksum, which is the shape the classifier accepts. That combination never
+// existed in the database, so accepting it would be a wrong accept, not a stale one.
+//
+// The writer is a separate process with a short busy timeout. It is NOT required to commit
+// while the classifier holds its read transaction — requiring that would deadlock the test.
+// The assertion is only that the classifier never reports already_at.
+describe('classification reads one consistent state', () => {
+  const STATE_A = [V1_CREATE, `INSERT INTO schema_migrations VALUES (1, '${'0'.repeat(64)}', 'x')`];
+
+  function flipToStateB(): void {
+    const script = `const D=require(${JSON.stringify(BETTER_SQLITE3)});`
+      + 'const d=new D(process.argv[1]);d.pragma("busy_timeout = 250");'
+      + 'try{d.exec("BEGIN IMMEDIATE");'
+      + `d.exec("CREATE TABLE extra (a TEXT)");`
+      + `d.exec("UPDATE schema_migrations SET checksum = '${V1_CHECKSUM}'");`
+      + 'd.exec("COMMIT");}catch(e){}d.close();';
+    try {
+      execFileSync(process.execPath, ['-e', script, dbPath], { stdio: 'ignore' });
+    } catch { /* the writer may lose the lock; that is allowed */ }
+  }
+
+  it('refuses each state on its own', () => {
+    seed(dbPath, STATE_A);
+    expectCode(() => initialise(dbPath), 'E_CHECKSUM_MISMATCH');
+    rmSync(dbPath);
+    seed(dbPath, [V1_CREATE, REGISTRY_ROW, 'CREATE TABLE extra (a TEXT)']);
+    expectCode(() => initialise(dbPath), 'E_UNKNOWN_SCHEMA');
+  });
+
+  it('never combines one state’s schema with another state’s registry row', () => {
+    seed(dbPath, STATE_A);
+    // The writer commits between what would be two separate reads. Inside one read
+    // transaction it cannot, so the classifier sees only state A.
+    const prepare = Database.prototype.prepare;
+    let flipped = false;
+    (Database.prototype as unknown as { prepare: (s: string) => unknown }).prepare =
+      function patched(this: Database.Database, source: string): unknown {
+        // Flip between the two reads: the schema read has completed, the registry read has
+        // not started. Firing before the first read would simply show both reads state B.
+        if (!flipped && source.includes('FROM schema_migrations')) {
+          flipped = true;
+          flipToStateB();
+        }
+        return prepare.call(this, source);
+      };
+    let outcome: string;
+    try {
+      try {
+        outcome = initialise(dbPath).status;
+      } catch (error) {
+        outcome = error instanceof InitError ? error.code : 'THREW';
+      }
+    } finally {
+      (Database.prototype as unknown as { prepare: (s: string) => unknown }).prepare = prepare;
+    }
+    expect(flipped).toBe(true);
+    // Whether the writer won its lock or not, neither real state is v1, so neither is
+    // acceptable. Only a mixed read could have produced already_at.
+    expect(outcome).not.toBe('already_at');
+  });
+});
+
+// F9. A database another process is holding is valid, not malformed.
+describe('lock contention', () => {
+  it('reports a retryable code instead of calling the database invalid', async () => {
+    initialise(dbPath);
+    const holder = `const D=require(${JSON.stringify(BETTER_SQLITE3)});`
+      + 'const d=new D(process.argv[1]);d.exec("BEGIN EXCLUSIVE");'
+      // Held well past the driver's five-second busy timeout, so the classifier really does
+      // give up rather than simply outwaiting the holder.
+      + 'process.stdout.write("held\\n");setTimeout(()=>{},20000);';
+    const child = spawn(process.execPath, ['-e', holder, dbPath], { stdio: ['ignore', 'pipe', 'ignore'] });
+    try {
+      await new Promise<void>((resolveHeld, rejectHeld) => {
+        child.stdout.on('data', () => resolveHeld());
+        child.on('exit', () => rejectHeld(new Error('the lock holder exited early')));
+      });
+      expectCode(() => initialise(dbPath), 'E_DB_BUSY');
+    } finally {
+      child.kill('SIGKILL');
+    }
+  });
+});
+
+// F10. Real power-loss durability is not testable here and is not claimed. What is testable,
+// and is tested, is that the synchronisation happens at all, on the right targets, in the
+// right order, and that a failure to synchronise is reported instead of swallowed.
+describe('the synchronisation steps that precede a success report', () => {
+  afterEach(() => { vi.doUnmock('node:fs'); vi.resetModules(); });
+
+  async function importWithFsync(onSync: (path: string) => void): Promise<typeof import('../src/db/migrate.js')> {
+    vi.resetModules();
+    vi.doMock('node:fs', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:fs')>();
+      const paths = new Map<number, string>();
+      return {
+        ...actual,
+        openSync(target: string, flags: string) {
+          const fd = actual.openSync(target, flags);
+          paths.set(fd, target);
+          return fd;
+        },
+        fsyncSync(fd: number) {
+          onSync(paths.get(fd) ?? 'unknown');
+          return actual.fsyncSync(fd);
+        },
+      };
+    });
+    return import('../src/db/migrate.js');
+  }
+
+  it('flushes the new database and then its parent directory', async () => {
+    const synced: string[] = [];
+    const { initialise: fresh } = await importWithFsync((target) => synced.push(target));
+    expect(fresh(dbPath).status).toBe('applied');
+
+    expect(synced).toHaveLength(2);
+    // The file's own contents first, while it is still unpublished under a temporary name…
+    expect(synced[0]).toMatch(/\/\.dev-orch-init-[^/]+\.tmp$/);
+    // …then the directory entry that makes the published name durable. Compared against the
+    // resolved parent, because that is the form production uses everywhere downstream.
+    expect(synced[1]).toBe(realpathSync(dir));
+  });
+
+  it('reports a failure, not applied, when flushing the database fails', async () => {
+    const { initialise: fresh, InitError: FreshError } = await importWithFsync((target) => {
+      if (target.endsWith('.tmp')) throw new Error('injected sync failure');
+    });
+    let code: string | undefined;
+    try {
+      fresh(dbPath);
+    } catch (error) {
+      code = error instanceof FreshError ? error.code : 'WRONG_TYPE';
+    }
+    expect(code).toBe('E_CREATE_FAILED');
+    // Nothing was published, and the temporary file did not survive.
+    expect(entries()).toEqual([]);
+  });
+
+  it('reports a failure, not applied, when flushing the directory fails', async () => {
+    const { initialise: fresh, InitError: FreshError } = await importWithFsync((target) => {
+      if (target === realpathSync(dir)) throw new Error('injected sync failure');
+    });
+    let code: string | undefined;
+    try {
+      fresh(dbPath);
+    } catch (error) {
+      code = error instanceof FreshError ? error.code : 'WRONG_TYPE';
+    }
+    expect(code).toBe('E_CREATE_FAILED');
+    // The link already existed when the flush failed, so the database is present but was
+    // never reported as applied. A later run classifies it normally rather than trusting an
+    // unflushed success. This is stated in the README as an accepted behaviour.
+    expect(entries()).toEqual(['orchestrator.sqlite']);
+  });
+});
+
+// F2, fault-injection evidence. A sidecar whose lstat fails for a reason other than ENOENT
+// must refuse the target, not be read as "absent". Real OS permission reproduction is
+// NOT_RUN; the error is injected instead, only for the one sidecar path, with every other
+// filesystem call left untouched.
+describe('a sidecar that cannot be stat-ed', () => {
+  afterEach(() => { vi.doUnmock('node:fs'); vi.resetModules(); });
+
+  it('refuses the target instead of treating the sidecar as absent', async () => {
+    const journal = `${realpathSync(dir)}/orchestrator.sqlite-journal`;
+    let injected = 0;
+    vi.resetModules();
+    vi.doMock('node:fs', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:fs')>();
+      return {
+        ...actual,
+        lstatSync(target: string, options?: unknown) {
+          if (target === journal) {
+            injected += 1;
+            const denied = new Error('EACCES: permission denied') as NodeJS.ErrnoException;
+            denied.code = 'EACCES';
+            throw denied;
+          }
+          return (actual.lstatSync as (t: string, o?: unknown) => unknown)(target, options);
+        },
+      };
+    });
+    const { initialise: fresh, InitError: FreshError } = await import('../src/db/migrate.js');
+
+    let code: string | undefined;
+    try {
+      fresh(dbPath);
+    } catch (error) {
+      code = error instanceof FreshError ? error.code : `WRONG_TYPE:${String(error)}`;
+    }
+
+    // The injection must actually have fired; a miss would make this test pass for the
+    // wrong reason, and an unrelated exception must not be mistaken for the refusal.
+    expect(injected).toBeGreaterThan(0);
+    expect(code).toBe('E_DB_RECOVERY_REQUIRED');
+    expect(existsSync(dbPath)).toBe(false);
+    expect(entries()).toEqual([]);
   });
 });

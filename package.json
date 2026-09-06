@@ -5,7 +5,7 @@
   "description": "SBALT Development Orchestrator \u2014 durable task/lane orchestration for multi-agent software development workflows.",
   "type": "module",
   "engines": {
-    "node": ">=20.11"
+    "node": ">=22"
   },
   "bin": {
     "dev-orch": "./dist/cli/index.js"
