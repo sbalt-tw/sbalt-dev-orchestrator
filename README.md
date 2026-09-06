@@ -66,6 +66,16 @@ it while the others report `already_at`.
 * A path is accepted only if it is absolute, lexically canonical, and unchanged by the
   trimming the SQLite driver applies before opening it.
 * A database is only recognized if its header declares the rollback journal format.
+* A target reachable under more than one name is refused. Recovery is detected from a sidecar
+  named after the path you gave, and SQLite derives the journal name the same way, so a
+  database with two names can have a hot journal beside the *other* one. Publishing briefly
+  gives the target a second name, so the count is waited out with a deadline rather than
+  excused; if it does not settle, the target is refused. Nothing belonging to another process
+  — no temporary file, no alias, no journal — is ever removed to make a check pass.
+
+  **A single link count is not a health certificate.** It says the target has one name right
+  now. It says nothing about whether the file was renamed earlier, nor whether its recovery
+  history is intact.
 
 ## Accepted limitations
 

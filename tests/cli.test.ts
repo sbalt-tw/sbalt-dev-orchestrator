@@ -102,18 +102,24 @@ describe('the compiled command line', () => {
 // is created. `--db /a --db /b` used to initialise /b, and `--db= --db=/b` even slipped past
 // the empty-value refusal.
 describe('an ambiguous --db', () => {
+  // The contract is "the first argument error wins", so each form is pinned to the exact code
+  // it actually produces. An oracle that accepted either code could not show which rule
+  // applied — and the empty-value-first case really does report MISSING, because the value is
+  // validated before a second occurrence is ever seen.
   it.each([
-    ['two spaced forms', (a: string, b: string) => ['db:init', '--db', a, '--db', b]],
-    ['two joined forms', (a: string, b: string) => ['db:init', `--db=${a}`, `--db=${b}`]],
-    ['mixed forms', (a: string, b: string) => ['db:init', '--db', a, `--db=${b}`]],
-    ['an empty value first', (a: string, b: string) => ['db:init', '--db=', `--db=${b}`]],
-  ])('refuses %s and creates neither path', (_label, build) => {
+    ['two spaced forms', (a: string, b: string) => ['db:init', '--db', a, '--db', b], 'E_DB_ARG_REPEATED'],
+    ['two joined forms', (a: string, b: string) => ['db:init', `--db=${a}`, `--db=${b}`], 'E_DB_ARG_REPEATED'],
+    ['mixed forms', (a: string, b: string) => ['db:init', '--db', a, `--db=${b}`], 'E_DB_ARG_REPEATED'],
+    ['mixed forms, joined first', (a: string, b: string) => ['db:init', `--db=${a}`, '--db', b], 'E_DB_ARG_REPEATED'],
+    ['an empty value first', (_a: string, b: string) => ['db:init', '--db=', `--db=${b}`], 'E_DB_ARG_MISSING'],
+    ['an empty value second', (a: string, _b: string) => ['db:init', `--db=${a}`, '--db='], 'E_DB_ARG_REPEATED'],
+  ])('refuses %s with exactly %#, and creates neither path', (_label, build, code) => {
     const first = join(dir, 'first.sqlite');
     const second = join(dir, 'second.sqlite');
     const result = runCli(build(first, second));
     expect(result.status).toBe(1);
     expect(result.stdout).toBe('');
-    expect(result.stderr.trim()).toMatch(/^db:init error=E_DB_ARG_(REPEATED|MISSING) /);
+    expect(result.stderr.trim().startsWith(`db:init error=${code} `)).toBe(true);
     expect(readdirSync(dir)).toEqual([]);
   });
 

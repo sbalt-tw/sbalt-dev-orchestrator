@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync,
-  rmSync, statSync, symlinkSync, writeFileSync,
+  existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync,
+  realpathSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -1018,5 +1018,85 @@ describe('the declared install boundary', () => {
     expect(manifest.cpu).toEqual(['x64', 'arm64']);
     expect(lock.packages['']?.os).toEqual(manifest.os);
     expect(lock.packages['']?.cpu).toEqual(manifest.cpu);
+  });
+});
+
+// Recovery is detected from a sidecar named after the path that was given, and SQLite derives
+// the journal name the same way. A database reachable under two names can therefore have a hot
+// journal beside the *other* name. This needs no attacker and no path substitution, so it is
+// not covered by the accepted TOCTOU limitation.
+describe('a target reachable under more than one name', () => {
+  /** Dirties pages inside the existing v1 table only, so the schema stays recognizable and
+   *  the refusal cannot come from E_UNKNOWN_SCHEMA instead. */
+  function crashAWriteThrough(target: string): void {
+    const crash = `const D=require(${JSON.stringify(BETTER_SQLITE3)});`
+      + 'const d=new D(process.argv[1]);d.exec("BEGIN IMMEDIATE");'
+      + 'const st=d.prepare("UPDATE schema_migrations SET applied_at = ?");'
+      + 'for(let i=0;i<5000;i++) st.run("crashing-".repeat(20)+i);'
+      + "process.kill(process.pid,'SIGKILL');";
+    try {
+      execFileSync(process.execPath, ['-e', crash, target], { stdio: 'ignore' });
+    } catch { /* killed on purpose */ }
+  }
+
+  it('refuses an alias whose hot journal sits beside the other name', () => {
+    const alias = join(dir, 'alias.sqlite');
+    initialise(dbPath);
+    linkSync(dbPath, alias);
+    crashAWriteThrough(dbPath);
+
+    // The premise: the journal exists under one name only, and the alias looks clean.
+    expect(existsSync(`${dbPath}-journal`)).toBe(true);
+    expect(existsSync(`${alias}-journal`)).toBe(false);
+    expect(statSync(alias).nlink).toBe(2);
+    const before = digest(alias);
+
+    // The alias used to report already_at with recovery still pending on the same inode.
+    expectCode(() => initialise(alias), 'E_DB_TARGET_ALIASED');
+    // The original is still refused for its own reason.
+    expectCode(() => initialise(dbPath), 'E_DB_RECOVERY_REQUIRED');
+    // Nothing of anyone else's was removed to make either check pass.
+    expect(digest(alias)).toBe(before);
+    expect(existsSync(`${dbPath}-journal`)).toBe(true);
+  });
+
+  it('refuses a permanently aliased target even with no journal anywhere', () => {
+    const alias = join(dir, 'alias.sqlite');
+    initialise(dbPath);
+    linkSync(dbPath, alias);
+    const started = Date.now();
+    expectCode(() => initialise(alias), 'E_DB_TARGET_ALIASED');
+    // It waited rather than refusing instantly, and it stopped rather than waiting forever.
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1_000);
+    expect(existsSync(alias)).toBe(true);
+    expect(existsSync(dbPath)).toBe(true);
+  });
+
+  it('accepts a target whose second name goes away while it waits', async () => {
+    initialise(dbPath);
+    const held = join(dir, 'held.sqlite');
+    linkSync(dbPath, held);
+    expect(statSync(dbPath).nlink).toBe(2);
+    // The release must come from another process: the wait is synchronous, so a timer on
+    // this thread could never run while initialise is blocked — exactly as a publishing
+    // winner in its own process removes its temporary file.
+    const releaser = spawn(process.execPath, ['-e',
+      'setTimeout(()=>require("fs").unlinkSync(process.argv[1]),250)', held], { stdio: 'ignore' });
+    try {
+      expect(initialise(dbPath).status).toBe('already_at');
+    } finally {
+      releaser.kill('SIGKILL');
+    }
+    expect(existsSync(held)).toBe(false);
+    expect(statSync(dbPath).nlink).toBe(1);
+  });
+
+  it('publishes normally, leaving one name behind', () => {
+    // The ordinary path transiently holds two names — target and temporary — and must not be
+    // penalised for it once cleanup is done.
+    expect(initialise(dbPath).status).toBe('applied');
+    expect(statSync(dbPath).nlink).toBe(1);
+    expect(initialise(dbPath).status).toBe('already_at');
+    expect(entries()).toEqual(['orchestrator.sqlite']);
   });
 });

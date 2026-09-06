@@ -23,6 +23,7 @@ export const REASON_CODES = [
   'E_DB_PATH_NOT_CANONICAL',
   'E_DB_PARENT_MISSING',
   'E_DB_TARGET_NOT_REGULAR_FILE',
+  'E_DB_TARGET_ALIASED',
   'E_DB_NOT_SQLITE',
   'E_DB_UNSUPPORTED_FORMAT',
   'E_DB_BUSY',
@@ -55,6 +56,8 @@ export const REASON_TEXT: Readonly<Record<ReasonCode, string>> = Object.freeze({
   E_DB_PATH_NOT_CANONICAL: 'the database path must be canonical: no ".", "..", repeated or trailing separator',
   E_DB_PARENT_MISSING: 'the parent directory does not exist and is not created',
   E_DB_TARGET_NOT_REGULAR_FILE: 'the target exists and is not a regular file',
+  E_DB_TARGET_ALIASED: 'the target still has more than one name; a rollback journal may exist '
+    + 'under one of the others',
   E_DB_NOT_SQLITE: 'the path is not a readable SQLite database',
   E_DB_UNSUPPORTED_FORMAT: 'the database is not in the supported rollback-journal format',
   E_DB_BUSY: 'the database is locked by another process; retrying later may succeed',
@@ -219,6 +222,12 @@ const READ_VERSION_OFFSET = 19;
 /** Sidecars that mean the database is mid-transaction or in a mode this runner never uses. */
 const SIDECAR_SUFFIXES = ['-journal', '-wal', '-shm'] as const;
 
+// A publication makes the target and this runner's temporary name the same inode for a
+// moment, so a second name is not automatically an error. It is also not automatically
+// harmless, so it is waited out rather than excused, with a deadline.
+const ALIAS_WAIT_MS = 2_000;
+const ALIAS_POLL_MS = 25;
+
 /**
  * Classifies an existing path without writing to it. The connection is read-only and
  * requires the file to exist, so it cannot create a file, and refusing never repairs,
@@ -226,11 +235,18 @@ const SIDECAR_SUFFIXES = ['-journal', '-wal', '-shm'] as const;
  * reports from this same read-only connection.
  */
 function classifyExisting(dbPath: string): InitOutcome {
+  // First, because everything after it must be judged on the state that exists once the
+  // target has a single name — nothing observed before the wait is carried across it.
+  waitForSingleLink(dbPath);
+
   refuseRecoverySidecars(dbPath);
   // lstat, never stat: a symlink in the target position is refused as a target kind, and
   // is never resolved and classified as though it were the database itself.
   const stat = lstatSync(dbPath);
   if (!stat.isFile()) throw new InitError('E_DB_TARGET_NOT_REGULAR_FILE');
+  // Re-confirmed here rather than trusted from the wait: the link count is part of the
+  // state this classification is about to rely on.
+  if (stat.nlink !== 1) throw new InitError('E_DB_TARGET_ALIASED');
   if (stat.size === 0) throw new InitError('E_DB_EMPTY_FILE');
   refuseUnsupportedFormat(dbPath);
 
@@ -308,6 +324,43 @@ function classifyInOneSnapshot(db: Database.Database): InitOutcome {
  * Only ENOENT counts as absence: a dangling sidecar symlink, or a metadata error, refuses
  * rather than failing open.
  */
+/**
+ * Waits, with a deadline, for the target to have exactly one name.
+ *
+ * Recovery is detected by looking for a sidecar named after the path that was given, and
+ * SQLite derives the journal name the same way. A database reachable under two names can
+ * therefore have a hot journal beside the *other* name: `a.sqlite` is correctly refused
+ * while `a-alias.sqlite`, the same inode, was reported `already_at` with recovery still
+ * pending. No attacker and no path substitution is needed, so this is not covered by the
+ * accepted TOCTOU limitation.
+ *
+ * A second name is not automatically permanent: publishing makes the target and this
+ * runner's temporary file one inode until the temporary name is removed, and a loser
+ * classifying the winner's database can see that moment. So the count is waited out rather
+ * than excused. If it does not settle, the target is refused — never accepted, and never
+ * waited on indefinitely. Nothing belonging to anyone else is removed to make it settle.
+ */
+function waitForSingleLink(dbPath: string): void {
+  const deadline = Date.now() + ALIAS_WAIT_MS;
+  for (;;) {
+    let stat: ReturnType<typeof lstatSync>;
+    try {
+      stat = lstatSync(dbPath);
+    } catch {
+      throw new InitError('E_DB_TARGET_NOT_REGULAR_FILE');
+    }
+    if (!stat.isFile()) throw new InitError('E_DB_TARGET_NOT_REGULAR_FILE');
+    if (stat.nlink === 1) return;
+    if (Date.now() >= deadline) throw new InitError('E_DB_TARGET_ALIASED');
+    sleepBriefly(ALIAS_POLL_MS);
+  }
+}
+
+/** A synchronous pause; this module has no asynchronous path to yield to. */
+function sleepBriefly(milliseconds: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
 /**
  * Reads the SQLite header from the file itself, before any connection exists.
  *
