@@ -3,7 +3,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync,
-  realpathSync, rmSync, statSync, symlinkSync, writeFileSync,
+  realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -1098,5 +1098,149 @@ describe('a target reachable under more than one name', () => {
     expect(statSync(dbPath).nlink).toBe(1);
     expect(initialise(dbPath).status).toBe('already_at');
     expect(entries()).toEqual(['orchestrator.sqlite']);
+  });
+});
+
+// B3. The link count is checked twice: once by the bounded wait, and once again on the fresh
+// lstat that classification itself performs. The second check exists because a name can
+// appear between them. An earlier revision of this pull request claimed no test could make it
+// fire; that was wrong. The control point below makes it fire deterministically.
+describe('a second name that appears after the wait has finished', () => {
+  afterEach(() => { vi.doUnmock('node:fs'); vi.resetModules(); });
+
+  it('is caught by the check that runs after the wait', async () => {
+    initialise(dbPath);
+    const target = join(realpathSync(dir), 'orchestrator.sqlite');
+    const alias = join(realpathSync(dir), 'appeared-after-the-wait.sqlite');
+    let sawTarget = 0;
+    let linkedAfterWait = false;
+
+    vi.resetModules();
+    vi.doMock('node:fs', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:fs')>();
+      return {
+        ...actual,
+        lstatSync(path: string, options?: unknown) {
+          const stat = (actual.lstatSync as (p: string, o?: unknown) => { nlink: number })(path, options);
+          if (path !== target) return stat;
+          sawTarget += 1;
+          // Call 1 is the occupancy probe in initialise; call 2 is the last iteration of the
+          // wait, which is about to return because the count is one. The extra name is
+          // created after that value has been read, so the wait still returns normally and
+          // only the fresh lstat inside classification can notice.
+          if (sawTarget === 2 && stat.nlink === 1) {
+            actual.linkSync(target, alias);
+            linkedAfterWait = true;
+          }
+          return stat;
+        },
+      };
+    });
+    const { initialise: fresh, InitError: FreshError } = await import('../src/db/migrate.js');
+
+    let code: string | undefined;
+    try {
+      fresh(dbPath);
+    } catch (error) {
+      code = error instanceof FreshError ? error.code : `NOT_AN_INIT_ERROR:${String(error)}`;
+    }
+
+    // The control point must actually have fired, and the wait must have been satisfied
+    // before it did — otherwise this would be testing the first check again.
+    expect(linkedAfterWait).toBe(true);
+    expect(code).toBe('E_DB_TARGET_ALIASED');
+    expect(existsSync(alias)).toBe(true);
+  });
+});
+
+// B2. A slow but legitimate publisher makes other callers time out. That outcome is
+// retryable, and the retry has to be shown to succeed on its own terms — not by retrying an
+// arbitrary number of times, and not by treating any error as eventual success.
+describe('a publisher that holds its second name past the deadline', () => {
+  it('times out once, then succeeds on a retry after the name is released', () => {
+    initialise(dbPath);
+    const held = join(dir, 'held-by-a-slow-publisher.tmp');
+    linkSync(dbPath, held);
+
+    // First attempt, while the second name is still held: exactly one timeout.
+    const first = ((): string => {
+      try {
+        return initialise(dbPath).status;
+      } catch (error) {
+        return error instanceof InitError ? error.code : `NOT_AN_INIT_ERROR:${String(error)}`;
+      }
+    })();
+    expect(first).toBe('E_DB_TARGET_ALIASED');
+
+    // The publisher finishes and removes its own name. Exactly one retry follows.
+    unlinkSync(held);
+    const final = initialise(dbPath);
+
+    // First and final results are asserted separately: the timeout was real, and the retry
+    // succeeded for the right reason rather than by repetition.
+    expect(final).toEqual({ status: 'already_at', version: 1, checksum: V1_CHECKSUM });
+    expect(statSync(dbPath).nlink).toBe(1);
+  });
+});
+
+// B1. The wait is bounded on a monotonic clock. A wall-clock deadline could be cut short by
+// an adjustment, and the earlier revision's green mutation only showed that the existing
+// tests did not distinguish the two — not that the difference is untestable. It is testable:
+// the wall clock is moved forward past the deadline inside the real wait window, while
+// monotonic time has barely advanced.
+describe('a clock adjustment during the wait', () => {
+  afterEach(() => { vi.doUnmock('node:fs'); vi.resetModules(); });
+
+  it('does not cut the wait short, and classification completes normally', async () => {
+    initialise(dbPath);
+    const target = join(realpathSync(dir), 'orchestrator.sqlite');
+    const extra = join(realpathSync(dir), 'second-name.tmp');
+    linkSync(target, extra);
+
+    let jumped = false;
+    let released = false;
+    let waitIterations = 0;
+    const realNow = Date.now;
+    let offset = 0;
+    Date.now = (): number => realNow.call(Date) + offset;
+
+    vi.resetModules();
+    vi.doMock('node:fs', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:fs')>();
+      return {
+        ...actual,
+        lstatSync(path: string, options?: unknown) {
+          const stat = (actual.lstatSync as (p: string, o?: unknown) => { nlink: number })(path, options);
+          if (path !== target || stat.nlink !== 2) return stat;
+          // Only the wait polls a target that still has two names; the occupancy probe in
+          // initialise saw the same count, so both are counted and both are asserted below.
+          waitIterations += 1;
+          if (waitIterations === 2) {
+            // Inside the wait window: push the wall clock well past the deadline.
+            offset += 5_000;
+            jumped = true;
+          }
+          if (waitIterations === 3) {
+            // The second name goes away before any later controlled check sees it.
+            actual.unlinkSync(extra);
+            released = true;
+          }
+          return stat;
+        },
+      };
+    });
+
+    try {
+      const { initialise: fresh } = await import('../src/db/migrate.js');
+      const outcome = fresh(dbPath);
+      // Both control points must have fired, or this test proves nothing.
+      expect(jumped).toBe(true);
+      expect(released).toBe(true);
+      expect(outcome.status).toBe('already_at');
+    } finally {
+      Date.now = realNow;
+    }
+    expect(existsSync(extra)).toBe(false);
+    expect(statSync(dbPath).nlink).toBe(1);
   });
 });

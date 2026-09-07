@@ -48,39 +48,93 @@ support to other platforms.
 external process substituting the directory, the target, or a symlink along the path — or
 changing a database's journal mode — while it runs.
 
-That does **not** exclude ordinary contention between copies of this tool: several `db:init`
-processes may race to create the same target for the first time, and exactly one will create
-it while the others report `already_at`.
+Several `db:init` processes may race to create the same target: one creates it, the rest
+report `already_at`, or time out retryably (see *Contention* below).
+
+### Supported inputs
+
+**Created here (`applied`).** Built under a temporary name in this target's own resolved
+directory, verified by the same read-only classifier, published with a no-clobber `link()`,
+then flushed. This is the only case whose whole history is known.
+
+**Reopened in place (`already_at`).** The core use. It requires three things of you, which
+this tool cannot verify:
+
+| | |
+|---|---|
+| **Writer** | only this tool writes the database; nothing else opens it read-write or changes its journal mode |
+| **Path** | it stays at the absolute canonical path it was created at — not renamed, moved, or given an extra hard link |
+| **Journal custody** | after a crash, the journal stays beside the database under its own name until recovery completes; it is never deleted, moved, or separated |
+
+**`already_at` proves, at the moment of checking:** the path is absolute, canonical, with a
+resolved parent and no characters the driver would trim; the target is a regular file with
+one name; no `-journal`, `-wal` or `-shm` sits beside *that* name; the header declares the
+rollback-journal format; `sqlite_master` holds exactly the one v1 table with exactly the v1
+CREATE text; and the registry holds exactly one row — version 1 with the frozen checksum.
+
+**It does not prove:** that no recovery is pending on the inode; that this is the file this
+tool created; that no other writer has it open; or that any earlier flush reached the disk.
+
+**Unsupported.** Alias writes outside this tool's flow, arbitrary rename or move, incomplete
+restore, and adopting a foreign database. These are not merely discouraged — see the split
+below, because some of them this tool cannot detect at all.
 
 ## What holds inside that boundary
 
 * An existing file is never overwritten, truncated, repaired or recovered. Existing targets
   are opened read-only.
-* A symlink, directory, FIFO, socket or other non-regular file in the target position is
-  refused and never followed.
-* A recovery sidecar (`-journal`, `-wal`, `-shm`) refuses the target whether or not the
-  database itself is present.
 * Only a path that does not exist is initialised, and it is published whole: the database is
   built under a temporary name in the same resolved directory and linked into place with a
   no-clobber `link()`, never a `rename()`.
-* A path is accepted only if it is absolute, lexically canonical, and unchanged by the
-  trimming the SQLite driver applies before opening it.
-* A database is only recognized if its header declares the rollback journal format.
-* A target reachable under more than one name is refused. Recovery is detected from a sidecar
-  named after the path you gave, and SQLite derives the journal name the same way, so a
-  database with two names can have a hot journal beside the *other* one. Publishing briefly
-  gives the target a second name, so the count is waited out with a deadline rather than
-  excused; if it does not settle, the target is refused. Nothing belonging to another process
-  — no temporary file, no alias, no journal — is ever removed to make a check pass.
+* A target reachable under more than one name **at the time of checking** does not yet meet
+  the conditions for classification. Nothing belonging to another process — no temporary
+  file, no alias, no journal — is ever removed to make a check pass.
 
-  **A single link count is not a health certificate.** It says the target has one name right
-  now. It says nothing about whether the file was renamed earlier, nor whether its recovery
-  history is intact.
+**What this tool refuses, and what it cannot see.** The difference matters more than the list:
+
+| Refused, on technical evidence | Relies on your discipline; not detectable here |
+|---|---|
+| write-ahead-log or unknown header format | **a journal left beside a name the database no longer has** |
+| a sidecar beside the given name | a file that was renamed, copied, or restored from backup |
+| more than one name, after the wait | whether a recovery ever completed |
+| symlink, directory, FIFO, socket, empty file, non-canonical path | whether another writer has it open |
+| unrecognized schema, registry, version or checksum | whether this tool created it |
+
+Nothing in the right-hand column is closed by declaring it unsupported: this tool **accepts
+such inputs silently** rather than refusing them.
+
+**Order of checks.** The link count, sidecars, file kind and size, and the header are
+filesystem operations performed **outside any SQLite transaction**, each observing its own
+moment. Only the schema and registry reads share one read transaction.
+
+**Order of publication.** Flush the file, `link()`, confirm identity, flush the parent
+directory, then **attempt cleanup of this run's temporary name**. Only after that does a
+single exit decide what to return or raise, from the primary error and the cleanup result
+together — cleanup can neither overwrite a primary error nor pass silently when it fails. The
+command prints nothing until that decision is made: the successful return value is produced
+after the cleanup attempt, not before it.
+
+**Contention.** `E_DB_TARGET_ALIASED` says only that the target does not yet meet the
+conditions for classification. It is **retryable**, and it is **not** evidence that the extra
+name is permanent, that the database is damaged, or that a retry will fail again — a slow but
+legitimate publisher produces exactly this outcome. The deadline is measured on a monotonic
+clock and bounds the *waiting strategy*; it is not a promise that the command finishes within
+any number of seconds, since the process can be descheduled and filesystem calls can block.
 
 ## Accepted limitations
 
 These are limits of the approved boundary, not defects that were fixed. None of them is
 claimed to be eliminated.
+
+**A database whose journal was separated from it is accepted.** If the other name is unlinked
+or renamed away while its `-journal` remains, the surviving file has one name and no sidecar
+of its own, and is reported `already_at` while that inode still has a transaction to roll
+back. This is **open, and accepted for the controlled use above — not technically closed.**
+The scope note is SQLite's rollback-journal pairing specifically: recovery state lives in a
+file named after a path, so separating the two hides it. It is not a claim about every
+journal mode. No source verification, writer exclusion or recovery guarantee has been added,
+and this contract covers today's A1 only — a future writer or persistence feature must be
+re-examined rather than inheriting "only this tool writes".
 
 **Malicious TOCTOU is out of scope.** Verification and publication identify files by
 pathname. Node does expose `O_NOFOLLOW`, so a no-follow *open* is possible; what is missing is
@@ -90,11 +144,9 @@ in the parent directory during a run can therefore break the correspondence betw
 this tool verified and the file SQLite later opens. Inside a trusted directory this cannot
 happen; outside one, it is a real exposure and this tool does not defend against it.
 
-**Power-loss durability is unverified.** The database file and the parent directory are
-flushed before `applied` is reported, and a failure to flush is reported as a failure rather
-than swallowed. The ordering and the failure propagation are tested. Whether a given
-filesystem and platform actually preserve the entry across a power loss is not tested and is
-not claimed.
+**Power-loss durability is unverified.** A failure to flush is reported rather than swallowed,
+and the ordering and failure propagation are tested. Whether a given filesystem and platform
+preserve the entry across a power loss is not tested and is not claimed.
 
 **A publication can succeed while something after it fails.** Four facts are tracked
 separately and never stand for one another: whether this run published a target, whether the

@@ -56,8 +56,8 @@ export const REASON_TEXT: Readonly<Record<ReasonCode, string>> = Object.freeze({
   E_DB_PATH_NOT_CANONICAL: 'the database path must be canonical: no ".", "..", repeated or trailing separator',
   E_DB_PARENT_MISSING: 'the parent directory does not exist and is not created',
   E_DB_TARGET_NOT_REGULAR_FILE: 'the target exists and is not a regular file',
-  E_DB_TARGET_ALIASED: 'the target still has more than one name; a rollback journal may exist '
-    + 'under one of the others',
+  E_DB_TARGET_ALIASED: 'the target still has more than one name, so it does not yet meet the '
+    + 'conditions for classification; a later attempt may succeed',
   E_DB_NOT_SQLITE: 'the path is not a readable SQLite database',
   E_DB_UNSUPPORTED_FORMAT: 'the database is not in the supported rollback-journal format',
   E_DB_BUSY: 'the database is locked by another process; retrying later may succeed',
@@ -224,8 +224,12 @@ const SIDECAR_SUFFIXES = ['-journal', '-wal', '-shm'] as const;
 
 // A publication makes the target and this runner's temporary name the same inode for a
 // moment, so a second name is not automatically an error. It is also not automatically
-// harmless, so it is waited out rather than excused, with a deadline.
-const ALIAS_WAIT_MS = 2_000;
+// harmless, so it is waited out rather than excused, under a deadline.
+//
+// The deadline bounds the waiting strategy. It is not a promise that the command as a whole
+// finishes within any number of seconds: the process can be descheduled and a filesystem call
+// can block for as long as the operating system takes.
+const ALIAS_WAIT_NS = 2_000n * 1_000_000n;
 const ALIAS_POLL_MS = 25;
 
 /**
@@ -268,6 +272,10 @@ function classifyExisting(dbPath: string): InitOutcome {
  * describe a single state of the database. Read as two autocommit statements they did not:
  * a writer could commit between them, and the classifier could combine the schema of one
  * state with the version row of another and accept a database that was never valid.
+ *
+ * Only these two reads share that transaction. The checks that run before it — link count,
+ * sidecars, file kind and size, and the header — are filesystem operations made outside any
+ * SQLite transaction, and each observes its own moment.
  */
 function classifyInOneSnapshot(db: Database.Database): InitOutcome {
   try {
@@ -337,11 +345,17 @@ function classifyInOneSnapshot(db: Database.Database): InitOutcome {
  * A second name is not automatically permanent: publishing makes the target and this
  * runner's temporary file one inode until the temporary name is removed, and a loser
  * classifying the winner's database can see that moment. So the count is waited out rather
- * than excused. If it does not settle, the target is refused — never accepted, and never
- * waited on indefinitely. Nothing belonging to anyone else is removed to make it settle.
+ * than excused. Nothing belonging to anyone else is removed to make it settle.
+ *
+ * Timing out says only that the target does not yet meet the conditions for classification.
+ * It is not evidence that the extra name is permanent, that the database is damaged, or that
+ * a retry will fail again — a legitimate publisher that was slow produces exactly this
+ * outcome, and the caller may retry.
  */
 function waitForSingleLink(dbPath: string): void {
-  const deadline = Date.now() + ALIAS_WAIT_MS;
+  // Monotonic: a wall-clock deadline can be shortened or extended indefinitely by a clock
+  // adjustment, which would make "bounded" untrue in both directions.
+  const startedAt = process.hrtime.bigint();
   for (;;) {
     let stat: ReturnType<typeof lstatSync>;
     try {
@@ -351,7 +365,9 @@ function waitForSingleLink(dbPath: string): void {
     }
     if (!stat.isFile()) throw new InitError('E_DB_TARGET_NOT_REGULAR_FILE');
     if (stat.nlink === 1) return;
-    if (Date.now() >= deadline) throw new InitError('E_DB_TARGET_ALIASED');
+    if (process.hrtime.bigint() - startedAt >= ALIAS_WAIT_NS) {
+      throw new InitError('E_DB_TARGET_ALIASED');
+    }
     sleepBriefly(ALIAS_POLL_MS);
   }
 }
