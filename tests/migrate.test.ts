@@ -13,6 +13,7 @@ import {
   initialise, InitError, canonicalBytes, checksumOf,
   CHECKSUM_ALGORITHM, V1, V1_CHECKSUM, V1_CREATE,
 } from '../src/db/migrate.js';
+import type { Migration } from '../src/db/migrate.js';
 
 // Resolved here so the crash fixture can load the same driver from a bare child process.
 const BETTER_SQLITE3 = createRequire(import.meta.url).resolve('better-sqlite3');
@@ -891,6 +892,115 @@ describe('checksum input domain', () => {
   it('leaves the released v1 identity untouched', () => {
     expect(checksumOf(V1)).toBe(V1_CHECKSUM);
   });
+
+  // F17. Round 9. Validation and encoding read the caller's values separately, so an accessor
+  // could answer the checks with a legal value and the preimage with another. "Did it throw" is
+  // not a usable oracle here, and neither is a digest comparison against the ill-formed case:
+  // a lone surrogate and U+FFFD encode to the same bytes, so that shape cannot say WHICH value
+  // was encoded. These cases therefore make the late value one whose encoding differs, so the
+  // resulting digest names the value that actually reached the preimage.
+  describe('a value that changes between validation and encoding', () => {
+    const EARLY = "SELECT 'early'";
+    const LATE = "SELECT 'late'";
+
+    /** An array whose element 0 returns something else after its first read. */
+    const shifting = (first: string, rest: string): string[] => {
+      let reads = 0;
+      const a = [first];
+      Object.defineProperty(a, '0', {
+        enumerable: true,
+        configurable: true,
+        get: () => (reads++ === 0 ? first : rest),
+      });
+      return a;
+    };
+
+    it('encodes the statement it validated, not a later one', () => {
+      const shifted = checksumOf({ version: 1, statements: shifting(EARLY, LATE) });
+      expect(shifted).toBe(checksumOf({ version: 1, statements: [EARLY] }));
+      expect(shifted).not.toBe(checksumOf({ version: 1, statements: [LATE] }));
+    });
+
+    it('encodes the statement it validated when the array is a Proxy', () => {
+      let reads = 0;
+      const statements = new Proxy([EARLY], {
+        get: (target, prop, receiver) => (prop === '0'
+          ? (reads++ === 0 ? EARLY : LATE)
+          : Reflect.get(target, prop, receiver)),
+      });
+      expect(checksumOf({ version: 1, statements })).toBe(
+        checksumOf({ version: 1, statements: [EARLY] }),
+      );
+    });
+
+    it('encodes the version it validated, not a later one', () => {
+      let reads = 0;
+      const migration = { statements: [EARLY] } as { statements: string[]; version: number };
+      Object.defineProperty(migration, 'version', {
+        enumerable: true,
+        get: () => (reads++ < 3 ? 1 : 2),
+      });
+      expect(checksumOf(migration)).toBe(checksumOf({ version: 1, statements: [EARLY] }));
+      expect(checksumOf(migration)).not.toBe(checksumOf({ version: 2, statements: [EARLY] }));
+    });
+
+    // The security-relevant shape. The digest is ambiguous by construction, so the assertion is
+    // that the ill-formed value cannot be what was encoded: either the call is refused, or the
+    // validated value is what came out.
+    it('never lets an ill-formed statement reach the preimage after validation', () => {
+      const statements = shifting('x�', 'x\uD800');
+      let digest: string | undefined;
+      try {
+        digest = checksumOf({ version: 1, statements });
+      } catch (error) {
+        expect(error).toBeInstanceOf(InitError);
+        expect((error as InitError).code).toBe('E_INTERNAL');
+        return;
+      }
+      expect(digest).toBe(checksumOf({ version: 1, statements: ['x�'] }));
+    });
+
+    it('still refuses a statement that is ill-formed from the start', () => {
+      expectCode(() => checksumOf({ version: 1, statements: ['a\uD800'] }), 'E_INTERNAL');
+    });
+
+    // The capture must not quietly widen what `statements` may be. Anything iterable or
+    // array-like would otherwise be reinterpreted: a string became one statement per character,
+    // and a bare number encoded as zero statements.
+    it.each([
+      ['a string', "SELECT 'a'"],
+      ['a plain array-like object', { 0: "SELECT 'a'", length: 1 }],
+      ['a Set', new Set(["SELECT 'a'"])],
+      ['a generator object', (function* () { yield "SELECT 'a'"; })()],
+      ['a number', 3],
+      ['null', null],
+    ])('refuses %s in place of the statements array', (_label, statements) => {
+      expectCode(
+        () => canonicalBytes({ version: 1, statements } as unknown as Migration),
+        'E_INTERNAL',
+      );
+    });
+
+    // Symbol.iterator is caller-controlled, so a capture that goes through it does not capture
+    // what the array holds. Compared over canonical bytes, not a digest: the bytes name the
+    // statement that was encoded, where a digest only says two inputs agreed.
+    it('captures what the array holds, not what its iterator yields', () => {
+      const statements = [EARLY];
+      Object.defineProperty(statements, Symbol.iterator, {
+        configurable: true,
+        value: function* () { yield LATE; },
+      });
+      expect(canonicalBytes({ version: 1, statements })).toEqual(
+        canonicalBytes({ version: 1, statements: [EARLY] }),
+      );
+    });
+
+    it('encodes the validated statement, compared over canonical bytes', () => {
+      expect(canonicalBytes({ version: 1, statements: shifting(EARLY, LATE) })).toEqual(
+        canonicalBytes({ version: 1, statements: [EARLY] }),
+      );
+    });
+  });
 });
 
 // 5. The declared platform boundary is enforced before anything touches the target.
@@ -939,6 +1049,7 @@ describe('what this run actually did', () => {
     failDirectorySync?: boolean;
     failCleanup?: boolean;
     publishWinnerBeforeLink?: string;
+    linkUnsupported?: boolean;
   }
 
   async function initialiseWith(injection: Injection): Promise<string> {
@@ -950,6 +1061,16 @@ describe('what this run actually did', () => {
       return {
         ...actual,
         linkSync(from: string, to: string) {
+          // FAULT INJECTION, not a real filesystem. A filesystem without hard links reports
+          // EPERM here; no such filesystem is mounted in this suite, so the errno is simulated.
+          // What is being tested is this runner's response to that errno, not the claim that
+          // exFAT behaves this way.
+          if (injection.linkUnsupported) {
+            const error: NodeJS.ErrnoException = new Error('operation not permitted, link');
+            error.code = 'EPERM';
+            error.errno = -1;
+            throw error;
+          }
           // The controlled interleaving: a legitimate competitor publishes first, then the
           // real linkSync runs and produces a real EEXIST — the error is not faked.
           if (injection.publishWinnerBeforeLink && !linked) {
@@ -994,6 +1115,16 @@ describe('what this run actually did', () => {
       return error instanceof FreshError ? error.code : `NOT_AN_INIT_ERROR:${String(error)}`;
     }
   }
+
+  // F18. Round 9. A filesystem that cannot make hard links — exFAT and FAT32 both mount locally
+  // on the supported platforms — fails publication permanently, not transiently. The point of
+  // this case is that the failure is reported as a failure and leaves nothing behind, so the
+  // condition is at least honest even though the code cannot yet name it; the README states the
+  // required capabilities and says plainly that retrying does not help.
+  it('fails, publishes nothing and cleans up when the filesystem has no hard links', async () => {
+    expect(await initialiseWith({ linkUnsupported: true })).toBe('E_CREATE_FAILED');
+    expect(entries()).toEqual([]);
+  });
 
   it('reports an unconfirmed identity when the post-link lstat fails, and keeps the target', async () => {
     expect(await initialiseWith({ failLstatAfterLink: true })).toBe('E_PUBLISHED_IDENTITY_UNCONFIRMED');

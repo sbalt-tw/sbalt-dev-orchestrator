@@ -151,26 +151,56 @@ function isWellFormed(value: string): boolean {
 export function canonicalBytes(migration: Migration): Buffer {
   // A JavaScript string may hold an unpaired surrogate, and UTF-8 encoding replaces it with
   // U+FFFD. Two different declared migrations could therefore encode to the same bytes, so
-  // an ill-formed statement is refused rather than silently rewritten. Encoding here is
-  // injective over well-formed strings; SHA-256 collision resistance is a separate and
-  // unproven assumption, not a mathematical impossibility.
+  // an ill-formed statement is refused rather than silently rewritten. Two separate claims,
+  // which this comment used to blur: (1) this *encoding* is injective over its legal input
+  // domain — a positive safe-integer version and well-formed statements — so two different
+  // legal migrations cannot share a preimage; (2) whether two different preimages can share a
+  // SHA-256 digest is an unproven assumption about the hash, not a mathematical impossibility,
+  // and nothing here establishes it.
   // The legal input domain: a positive safe integer version, and well-formed statements.
   // The version was interpolated unchecked, so 0 and -0, and 1 and '1', encoded identically.
   // A1's only production caller is the frozen V1 constant, which cannot supply an illegal
   // value; this closes the exported encoder rather than a reachable production path.
-  if (typeof migration.version !== 'number' || !Number.isSafeInteger(migration.version)
-    || migration.version < 1) {
+  //
+  // Round 9. Validation and encoding used to read `version` and `statements` from the caller's
+  // object separately, so a stateful accessor could answer the checks with a legal value and
+  // the preimage with a different one: an unpaired surrogate supplied only during encoding
+  // produced the same bytes, and the same digest, as a stable migration holding U+FFFD. Every
+  // externally supplied value is therefore captured once, here, and every line below reads only
+  // the capture. Holding a reference to the caller's array would not be a capture — the
+  // elements themselves have to be materialized, which is what Array.from does.
+  // The capture is by index from a genuine array, not Array.from and not for..of. Both of those
+  // consult Symbol.iterator, which the caller can replace: an array holding one statement can
+  // yield a different one, so the "snapshot" would capture a value the array never contained.
+  // Array.from also silently widens the domain this contract declares — a string became one
+  // statement per character, a plain array-like and a bare number were accepted outright.
+  // Reading `length` once and then each index once takes exactly the values the array holds.
+  const version: unknown = migration.version;
+  const source: unknown = migration.statements;
+  if (!Array.isArray(source)) throw new InitError('E_INTERNAL');
+  const count: unknown = source.length;
+  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) {
     throw new InitError('E_INTERNAL');
   }
-  for (const statement of migration.statements) {
-    if (!isWellFormed(statement)) throw new InitError('E_INTERNAL');
+  const statements: unknown[] = [];
+  for (let index = 0; index < count; index += 1) {
+    statements.push((source as readonly unknown[])[index]);
+  }
+
+  if (typeof version !== 'number' || !Number.isSafeInteger(version) || version < 1) {
+    throw new InitError('E_INTERNAL');
+  }
+  for (const statement of statements) {
+    if (typeof statement !== 'string' || !isWellFormed(statement)) {
+      throw new InitError('E_INTERNAL');
+    }
   }
   const parts = [
     Buffer.from(`${CHECKSUM_ALGORITHM}\n`, 'utf8'),
-    Buffer.from(`version:${migration.version}\n`, 'utf8'),
-    Buffer.from(`statements:${migration.statements.length}\n`, 'utf8'),
+    Buffer.from(`version:${version}\n`, 'utf8'),
+    Buffer.from(`statements:${statements.length}\n`, 'utf8'),
   ];
-  for (const statement of migration.statements) {
+  for (const statement of statements as readonly string[]) {
     const body = Buffer.from(statement, 'utf8');
     parts.push(Buffer.from(`len:${body.length}\n`, 'utf8'), body, Buffer.from('\n', 'utf8'));
   }

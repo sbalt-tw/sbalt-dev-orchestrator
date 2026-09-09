@@ -12,8 +12,31 @@ recorded. Nothing else is implemented.
 
 ## Supported platforms and formats
 
-**Linux and macOS only**, on a local filesystem, with SQLite databases in the **rollback
-journal** format.
+**Linux and macOS only**, on a filesystem with the capabilities listed below, with SQLite
+databases in the **rollback journal** format.
+
+**Required filesystem capabilities.** "Local" is not the contract — these are, and they follow
+from the publication path rather than from a preference:
+
+| Capability | Where it is used | If it is missing |
+|---|---|---|
+| `link()` within one filesystem, failing `EEXIST` instead of replacing | the database is built under a temporary name in the target's own directory and published with `link()`; `rename()` is deliberately not used because it replaces silently | publication cannot happen at all |
+| `fsync()` on a regular file | the built database is flushed before it is published | durability cannot be established |
+| `fsync()` on a **directory** | the parent directory is flushed so the new name survives a crash | the name's durability cannot be established |
+| `stat`/`lstat` with stable `ino` and `dev` | after publishing, the target is re-identified as the very inode just verified | publication cannot be confirmed |
+
+Notably **exFAT and FAT32 do not provide hard links**, so `db:init` cannot create a database on
+them even though they mount locally on both supported platforms. **This is a permanent capability
+mismatch, not a transient error: retrying does not help, and no amount of waiting makes it
+succeed.** It surfaces as `E_CREATE_FAILED` after the temporary database has been built, which is
+an unhelpfully generic report for a permanent condition — this tool does not currently probe the
+filesystem's capabilities in advance or distinguish this case, and it is not claimed to.
+
+**What has actually been exercised.** APFS, on macOS during development: the volume type was
+confirmed on the very directory the suite uses, not inferred. CI runs on GitHub's
+`ubuntu-latest`, and **the pipeline does not assert what filesystem that runner provides**, so no
+specific Linux filesystem is claimed here — only that the suite passes there. Every other
+filesystem, capable or not, is untested.
 
 * **Windows is not supported.** Durable publication flushes the parent directory, which is
   not available through this API on Windows: `FlushFileBuffers` requires write access that a
