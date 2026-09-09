@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync,
-  realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync,
+  existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
+  readlinkSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -390,6 +390,61 @@ describe('the sidecar filename namespace', () => {
     writeFileSync(`${dbPath}-journal`, 'leftover');
     expectCode(() => initialise(dbPath), 'E_DB_RECOVERY_REQUIRED');
     expect(entries()).toEqual(['orchestrator.sqlite', 'orchestrator.sqlite-journal']);
+  });
+});
+
+// F16. Round 8. Reserving the sidecar suffixes with toLowerCase() was not enough: a
+// case-insensitive filesystem folds more than ASCII case, so "a.sqlite-ſhm" (U+017F) passed the
+// reservation and still occupied "a.sqlite-shm". The name is now restricted to an alphabet no
+// supported filesystem folds together, checked on the basename exactly as given.
+describe('the database name alphabet', () => {
+  // U+017F folds to "s"; the others are full-width, accented, zero-width and Roman-numeral
+  // spellings that a filesystem or a normalizer could map onto an ASCII name.
+  const REFUSED = ['a.sqlite-ſhm', 'ｄb.sqlite', 'café.sqlite', 'db.sqlite​x', 'Ⅰ.sqlite'];
+
+  it.each(REFUSED)('refuses "%s" and creates nothing', (name) => {
+    expectCode(() => initialise(join(dir, name)), 'E_DB_PATH_NAME_UNSUPPORTED');
+    expect(entries()).toEqual([]);
+  });
+
+  // The restriction is on the name this runner reasons about, not on where the caller keeps it.
+  it('accepts a legal name under a non-ASCII parent, and repeats', () => {
+    const parent = join(dir, '測試目錄', 'ſub');
+    mkdirSync(parent, { recursive: true });
+    const target = join(parent, 'orchestrator.sqlite');
+    expect(initialise(target).status).toBe('applied');
+    expect(initialise(target).status).toBe('already_at');
+  });
+
+  it('still accepts the ordinary alphabet', () => {
+    expect(initialise(join(dir, 'orch_2026-09.v1.sqlite')).status).toBe('applied');
+  });
+
+  // Does this volume actually have the behaviour the finding depends on? Asserted, never
+  // assumed: a test that silently skips on a case-sensitive filesystem would report the APFS
+  // case as covered when it was not.
+  const folds = (): boolean => {
+    const probe = join(dir, 'probe-shm');
+    writeFileSync(probe, 'x');
+    try {
+      const equal = lstatSync(join(dir, 'probe-ſhm')).ino === lstatSync(probe).ino;
+      return equal;
+    } catch {
+      return false;
+    } finally {
+      unlinkSync(probe);
+    }
+  };
+
+  it('keeps the reviewer sequence idempotent where the filesystem folds U+017F', () => {
+    expect(initialise(dbPath).status).toBe('applied');
+    expectCode(() => initialise(`${dbPath}-ſhm`), 'E_DB_PATH_NAME_UNSUPPORTED');
+    expect(initialise(dbPath).status).toBe('already_at');
+    // On a folding volume the middle call is what used to poison the namespace; on a
+    // case-sensitive one it cannot, and that is recorded rather than passed off as coverage.
+    if (!folds()) {
+      expect(existsSync(`${dbPath}-shm`)).toBe(false);
+    }
   });
 });
 

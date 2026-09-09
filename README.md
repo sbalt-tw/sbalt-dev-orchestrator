@@ -66,14 +66,25 @@ this tool cannot verify:
 | **Path** | it stays at the absolute canonical path it was created at — not renamed, moved, or given an extra hard link |
 | **Journal custody** | after a crash, the journal stays beside the database under its own name until recovery completes; it is never deleted, moved, or separated |
 
+**The name's alphabet (enforced).** A database *name* may use only ASCII letters, digits, `.`,
+`_` and `-`. The parent directory is unrestricted — only the name this tool has to reason about.
+Anything else is refused with `E_DB_PATH_NAME_UNSUPPORTED` before anything is created. The check
+reads the name exactly as given: it is never normalized, decomposed or transliterated first,
+because that would accept the spellings the rule exists to exclude. The reason is that
+case-insensitive filesystems fold far more than ASCII case — on APFS `a.sqlite-ſhm` (U+017F) and
+`a.sqlite-shm` are one directory entry — so a name this tool treated as distinct could still land
+in another database's recovery namespace. Restricting the alphabet is narrower and more
+predictable than tracking each filesystem's folding rules.
+
 **Reserved names (enforced, not a convention).** A database name may not end in `-journal`,
 `-wal` or `-shm`. Those are the names SQLite gives the sidecars of the database one suffix
 shorter, so a database allowed to take one would sit inside another database's recovery
 namespace and make that one report `E_DB_RECOVERY_REQUIRED` forever. `db:init` refuses such a
 target with `E_DB_PATH_SIDECAR_RESERVED` before it creates anything, whether or not the shorter
 name exists yet, and regardless of which of the two you create first. The comparison ignores
-case on every platform, because macOS volumes are case-insensitive by default and a path
-refused on one supported platform must not be accepted on another.
+**ASCII** case on every platform, so `-JOURNAL` is refused too; it does not attempt Unicode case
+folding, and does not need to, because the alphabet rule above has already excluded every
+character whose folding differs between filesystems.
 
 **`already_at` proves, at the moment of checking:** the path is absolute, canonical, with a
 resolved parent and no characters the driver would trim; the target is a regular file with

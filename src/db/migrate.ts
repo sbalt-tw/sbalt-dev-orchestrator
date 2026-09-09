@@ -21,6 +21,7 @@ export const REASON_CODES = [
   'E_DB_ARG_REPEATED',
   'E_DB_PATH_NOT_ABSOLUTE',
   'E_DB_PATH_NOT_CANONICAL',
+  'E_DB_PATH_NAME_UNSUPPORTED',
   'E_DB_PATH_SIDECAR_RESERVED',
   'E_DB_PARENT_MISSING',
   'E_DB_TARGET_NOT_REGULAR_FILE',
@@ -55,6 +56,8 @@ export const REASON_TEXT: Readonly<Record<ReasonCode, string>> = Object.freeze({
   E_DB_ARG_REPEATED: '--db was given more than once; the intended database is ambiguous',
   E_DB_PATH_NOT_ABSOLUTE: 'the database path must be absolute',
   E_DB_PATH_NOT_CANONICAL: 'the database path must be canonical: no ".", "..", repeated or trailing separator',
+  E_DB_PATH_NAME_UNSUPPORTED: 'the database name may use only ASCII letters, digits, ".", "_" '
+    + 'and "-"; other characters can be folded together by the filesystem',
   E_DB_PATH_SIDECAR_RESERVED: 'the database name may not end in "-journal", "-wal" or "-shm"; '
     + 'those names are reserved for the recovery sidecars of another database',
   E_DB_PARENT_MISSING: 'the parent directory does not exist and is not created',
@@ -224,6 +227,20 @@ const READ_VERSION_OFFSET = 19;
 
 /** Sidecars that mean the database is mid-transaction or in a mode this runner never uses. */
 const SIDECAR_SUFFIXES = ['-journal', '-wal', '-shm'] as const;
+
+/**
+ * The database name's accepted alphabet. Round 8: reserving the sidecar suffixes with
+ * toLowerCase() was not enough, because a case-insensitive filesystem folds far more than
+ * ASCII case. On APFS "a.sqlite-ſhm" (U+017F) and "a.sqlite-shm" are one directory entry, so a
+ * name this runner considered distinct still landed in another database's recovery namespace.
+ *
+ * Rather than chase the filesystem's folding rules, the name is restricted to an alphabet whose
+ * members no supported filesystem folds together. The test is applied to the basename exactly
+ * as given: nothing is normalized, decomposed or transliterated first, because doing so would
+ * accept the very spellings this is meant to exclude and hand SQLite a name the caller never
+ * wrote. The parent directory is not restricted — only the name this runner has to reason about.
+ */
+const PORTABLE_NAME = /^[A-Za-z0-9._-]+$/;
 
 // A publication makes the target and this runner's temporary name the same inode for a
 // moment, so a second name is not automatically an error. It is also not automatically
@@ -619,6 +636,11 @@ function canonicalTarget(dbPath: string): string {
   // empty basename, and mutation testing confirmed a standalone guard can never fire.
   const name = basename(dbPath);
 
+  // Applied to the given basename directly. A name outside this alphabet is refused, never
+  // repaired: normalizing or transliterating first would let "a.sqlite-ſhm" through as the very
+  // "-shm" the next rule rejects. The parent directory keeps its own spelling and is unaffected.
+  if (!PORTABLE_NAME.test(name)) throw new InitError('E_DB_PATH_NAME_UNSUPPORTED');
+
   // Recovery is detected by looking for "<target>-journal", "<target>-wal" and "<target>-shm".
   // A database whose own name ends in one of those suffixes therefore sits inside another
   // database's recovery namespace: once both exist — each created by an ordinary db:init —
@@ -627,10 +649,11 @@ function canonicalTarget(dbPath: string): string {
   // temporary or target file is created and without consulting the filesystem, so the refusal
   // does not depend on which database was created first, or on the other one existing at all.
   //
-  // The comparison is case-insensitive on every platform. macOS is supported and its default
-  // APFS volumes are case-insensitive, so "a.sqlite-JOURNAL" and "a.sqlite-journal" are one
-  // directory entry there. Applying the stricter rule uniformly also keeps a path that is
-  // refused on one supported platform from being accepted on another.
+  // The comparison folds ASCII case only, and that is now sufficient rather than merely
+  // convenient: the alphabet check above has already excluded every character whose folding
+  // differs between platforms, so "-JOURNAL" and "-journal" are the only spellings that can
+  // still reach here. Applying it uniformly keeps a path refused on one supported platform from
+  // being accepted on another.
   const foldedName = name.toLowerCase();
   if (SIDECAR_SUFFIXES.some((suffix) => foldedName.endsWith(suffix))) {
     throw new InitError('E_DB_PATH_SIDECAR_RESERVED');
