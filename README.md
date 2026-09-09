@@ -66,6 +66,15 @@ this tool cannot verify:
 | **Path** | it stays at the absolute canonical path it was created at — not renamed, moved, or given an extra hard link |
 | **Journal custody** | after a crash, the journal stays beside the database under its own name until recovery completes; it is never deleted, moved, or separated |
 
+**Reserved names (enforced, not a convention).** A database name may not end in `-journal`,
+`-wal` or `-shm`. Those are the names SQLite gives the sidecars of the database one suffix
+shorter, so a database allowed to take one would sit inside another database's recovery
+namespace and make that one report `E_DB_RECOVERY_REQUIRED` forever. `db:init` refuses such a
+target with `E_DB_PATH_SIDECAR_RESERVED` before it creates anything, whether or not the shorter
+name exists yet, and regardless of which of the two you create first. The comparison ignores
+case on every platform, because macOS volumes are case-insensitive by default and a path
+refused on one supported platform must not be accepted on another.
+
 **`already_at` proves, at the moment of checking:** the path is absolute, canonical, with a
 resolved parent and no characters the driver would trim; the target is a regular file with
 one name; no `-journal`, `-wal` or `-shm` sits beside *that* name; the header declares the

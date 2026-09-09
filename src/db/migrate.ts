@@ -21,6 +21,7 @@ export const REASON_CODES = [
   'E_DB_ARG_REPEATED',
   'E_DB_PATH_NOT_ABSOLUTE',
   'E_DB_PATH_NOT_CANONICAL',
+  'E_DB_PATH_SIDECAR_RESERVED',
   'E_DB_PARENT_MISSING',
   'E_DB_TARGET_NOT_REGULAR_FILE',
   'E_DB_TARGET_ALIASED',
@@ -54,6 +55,8 @@ export const REASON_TEXT: Readonly<Record<ReasonCode, string>> = Object.freeze({
   E_DB_ARG_REPEATED: '--db was given more than once; the intended database is ambiguous',
   E_DB_PATH_NOT_ABSOLUTE: 'the database path must be absolute',
   E_DB_PATH_NOT_CANONICAL: 'the database path must be canonical: no ".", "..", repeated or trailing separator',
+  E_DB_PATH_SIDECAR_RESERVED: 'the database name may not end in "-journal", "-wal" or "-shm"; '
+    + 'those names are reserved for the recovery sidecars of another database',
   E_DB_PARENT_MISSING: 'the parent directory does not exist and is not created',
   E_DB_TARGET_NOT_REGULAR_FILE: 'the target exists and is not a regular file',
   E_DB_TARGET_ALIASED: 'the target still has more than one name, so it does not yet meet the '
@@ -615,6 +618,23 @@ function canonicalTarget(dbPath: string): string {
   // No basename check: normalize() collapses "." and "..", "/" is the only path with an
   // empty basename, and mutation testing confirmed a standalone guard can never fire.
   const name = basename(dbPath);
+
+  // Recovery is detected by looking for "<target>-journal", "<target>-wal" and "<target>-shm".
+  // A database whose own name ends in one of those suffixes therefore sits inside another
+  // database's recovery namespace: once both exist — each created by an ordinary db:init —
+  // reopening the shorter name reports E_DB_RECOVERY_REQUIRED for what is really a second,
+  // healthy database. The namespace is reserved here, in the one shared validator, before any
+  // temporary or target file is created and without consulting the filesystem, so the refusal
+  // does not depend on which database was created first, or on the other one existing at all.
+  //
+  // The comparison is case-insensitive on every platform. macOS is supported and its default
+  // APFS volumes are case-insensitive, so "a.sqlite-JOURNAL" and "a.sqlite-journal" are one
+  // directory entry there. Applying the stricter rule uniformly also keeps a path that is
+  // refused on one supported platform from being accepted on another.
+  const foldedName = name.toLowerCase();
+  if (SIDECAR_SUFFIXES.some((suffix) => foldedName.endsWith(suffix))) {
+    throw new InitError('E_DB_PATH_SIDECAR_RESERVED');
+  }
 
   let parent: string;
   try {

@@ -345,6 +345,54 @@ describe('the path contract', () => {
   });
 });
 
+// F15. Round 7. Recovery is detected at "<target>-journal", "-wal" and "-shm", but those names
+// were themselves accepted as database targets, so two ordinary db:init calls could put a healthy
+// database inside another one's recovery namespace and make the first permanently unopenable.
+// These cases drive the real initialise and assert the outcome of the whole sequence, because the
+// pre-existing stale-sidecar tests only restate the unconditional predicate and stay green while
+// the conflict exists.
+describe('the sidecar filename namespace', () => {
+  const SUFFIXES = ['-journal', '-wal', '-shm'];
+
+  // Refusal must not depend on discovery order, so the conflicting name is refused here with no
+  // other database on disk at all. A guard that only fired when the shorter name already existed
+  // would pass the "second" cases below and still lose the guarantee when the order is reversed.
+  it.each(SUFFIXES)('refuses "%s" when no other database exists', (suffix) => {
+    expectCode(() => initialise(dbPath + suffix), 'E_DB_PATH_SIDECAR_RESERVED');
+    expect(entries()).toEqual([]);
+  });
+
+  it.each(SUFFIXES)('refuses "%s" once the base database exists, and touches nothing', (suffix) => {
+    initialise(dbPath);
+    const before = digest(dbPath);
+    expectCode(() => initialise(dbPath + suffix), 'E_DB_PATH_SIDECAR_RESERVED');
+    expect(entries()).toEqual(['orchestrator.sqlite']);
+    expect(digest(dbPath)).toBe(before);
+  });
+
+  // macOS is a supported platform and its default APFS volumes are case-insensitive, so an
+  // upper-case spelling is the same directory entry as the sidecar SQLite writes.
+  it.each(['-JOURNAL', '-Wal', '-sHm'])('refuses the case variant "%s"', (suffix) => {
+    expectCode(() => initialise(dbPath + suffix), 'E_DB_PATH_SIDECAR_RESERVED');
+  });
+
+  it('leaves the reviewer sequence idempotent instead of demanding recovery', () => {
+    expect(initialise(dbPath).status).toBe('applied');
+    expectCode(() => initialise(`${dbPath}-journal`), 'E_DB_PATH_SIDECAR_RESERVED');
+    // Before the fix this third call raised E_DB_RECOVERY_REQUIRED.
+    expect(initialise(dbPath).status).toBe('already_at');
+  });
+
+  // The reservation must not weaken the recovery guard it protects: a genuine leftover journal,
+  // written by something other than db:init, is still refused and still left on disk.
+  it('keeps refusing a real leftover journal, and does not remove it', () => {
+    initialise(dbPath);
+    writeFileSync(`${dbPath}-journal`, 'leftover');
+    expectCode(() => initialise(dbPath), 'E_DB_RECOVERY_REQUIRED');
+    expect(entries()).toEqual(['orchestrator.sqlite', 'orchestrator.sqlite-journal']);
+  });
+});
+
 // F6. The rollback proof runs through the real initialise. The production module exports no
 // seam and takes no callback, so the observation is made from the test side by intercepting
 // the driver: the INSERT is made to fail, and the connection is inspected at the moment
