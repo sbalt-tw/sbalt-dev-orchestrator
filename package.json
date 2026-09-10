@@ -24,7 +24,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev-orch": "tsx src/cli/index.ts"
+    "dev-orch": "tsx src/cli/bin.ts"
   },
   "dependencies": {
     "better-sqlite3": "13.0.3",

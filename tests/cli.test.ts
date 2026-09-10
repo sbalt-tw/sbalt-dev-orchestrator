@@ -7,6 +7,9 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
+// The repository root, so the manifest is read from where npm would read it.
+const REPO = fileURLToPath(new URL('..', import.meta.url));
 import { tmpdir } from 'node:os';
 import { assertFreshlyBuilt } from './build-cli.js';
 import Database from 'better-sqlite3';
@@ -143,38 +146,65 @@ describe('an ambiguous --db', () => {
   });
 });
 
-// F22. Round 13/16. Without a listener, an ordinary termination signal takes the operating
+// F22. Round 13/16/18. Without a listener, an ordinary termination signal takes the operating
 // system's default action and the process dies without unwinding JavaScript, so the `finally` that
 // removes this run's temporary never runs. The target and the temporary are then two names for one
-// inode, and every later run refuses with E_DB_TARGET_ALIASED until someone deletes the temporary
-// by hand.
+// inode, and every later run refuses with E_DB_TARGET_ALIASED until someone deletes the temporary.
 //
-// Round 16 made this deterministic. Earlier versions polled for the target name and fired when it
-// appeared, which proves only that linkSync returned — the target persists after cleanup, so a
-// late poll would still "succeed", and an implementation that installed its handlers only after
-// the protected work could satisfy every assertion. That is a false green, and it is the exact
-// shape being tested for.
+// The window is entered deterministically, not raced. A test-side loader redirects `node:fs`
+// inside the child to a shim wrapping linkSync: after the real link succeeds and before returning
+// to production code it announces readiness and waits. A plain `fs.linkSync = ...` patch was
+// measured NOT to work — production uses an ESM named import, whose binding does not observe a
+// later property assignment — so the specifier is redirected instead.
 //
-// Instead a test-side loader redirects `node:fs` inside the child to a shim that wraps linkSync:
-// after the real link succeeds and before returning to production code, it writes a ready file and
-// then blocks. The parent sends the real signal while the child is held there, and only then
-// releases it. A plain `fs.linkSync = ...` patch was measured NOT to work — production uses an ESM
-// named import, whose binding does not observe a later property assignment — so the specifier is
-// redirected instead. The ready file is also the proof that the shim is genuinely the function
-// production calls: if it never appears, the test fails rather than passing quietly.
+// Round 18 fixed how that hold is proved. Previously the child spun on Date.now() and, on expiry,
+// simply returned; the parent inferred "still held" from the ready file, which persists after
+// cleanup. A stalled parent could therefore signal after the hold had lapsed and after cleanup had
+// completed, and still be recorded as having hit the window — the same false green this test
+// exists to prevent. Now:
+//
+//   * the child's deadline is monotonic, so a wall-clock jump cannot change it;
+//   * on expiry the child writes an `expired` marker and never writes `released`;
+//   * on release the child writes `released` BEFORE linkSync returns.
+//
+// The parent requires the `released` marker and the absence of `expired`. It does not accept the
+// ready file as proof of anything but arrival. Deliberately, the child does not throw on expiry:
+// production would catch that, clean up, and report an ordinary failure that the test could
+// mistake for a legitimate refusal. The markers keep the judgement on the test side.
 describe('a real interrupt during publication', () => {
   interface Held {
-    engaged: boolean;
+    ready: boolean;
+    released: boolean;
+    expired: boolean;
     code: number | null;
     signal: string | null;
     stdout: string;
     stderr: string;
   }
 
-  function interruptWhileHeld(target: string, signal: string): Promise<Held> {
+  interface HoldOptions {
+    /** Milliseconds the child will hold before giving up. */
+    limitMs?: number;
+    /** Called once the child is holding; decides when (or whether) to release. */
+    onHold?: (release: () => void) => void | Promise<void>;
+    /** Moves the child's Date.now, to show the hold's deadline does not depend on it. */
+    skewMs?: number;
+  }
+
+  function interruptWhileHeld(
+    target: string,
+    signal: string | null,
+    options: HoldOptions = {},
+  ): Promise<Held> {
     return new Promise((resolve, reject) => {
-      const ready = join(dir, '.ready');
-      const release = join(dir, '.release');
+      // A fresh identity per attempt, so a marker from an earlier case can never be mistaken
+      // for this one's evidence.
+      const id = randomUUID();
+      const ready = join(dir, `.ready-${id}`);
+      const releaseFlag = join(dir, `.release-${id}`);
+      const released = join(dir, `.released-${id}`);
+      const expired = join(dir, `.expired-${id}`);
+
       const child = spawn(
         process.execPath,
         ['--import', REGISTER, CLI, 'db:init', '--db', target],
@@ -183,8 +213,11 @@ describe('a real interrupt during publication', () => {
           env: {
             ...process.env,
             A1_HANDSHAKE_READY: ready,
-            A1_HANDSHAKE_RELEASE: release,
-            A1_HANDSHAKE_LIMIT_MS: '15000',
+            A1_HANDSHAKE_RELEASE: releaseFlag,
+            A1_HANDSHAKE_RELEASED: released,
+            A1_HANDSHAKE_EXPIRED: expired,
+            A1_HANDSHAKE_LIMIT_MS: String(options.limitMs ?? 15_000),
+            A1_HANDSHAKE_SKEW_MS: String(options.skewMs ?? 0),
           },
         },
       );
@@ -193,28 +226,45 @@ describe('a real interrupt during publication', () => {
       child.stdout.on('data', (c: Buffer) => { stdout += c.toString(); });
       child.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
 
-      let engaged = false;
-      const deadline = Date.now() + 20_000;
-      const waitForHold = (): void => {
+      let sawReady = false;
+      const deadline = Date.now() + 30_000;
+      const poll = async (): Promise<void> => {
         if (existsSync(ready)) {
-          engaged = true;
-          // The child is provably between the publication link and its cleanup.
-          try { process.kill(child.pid as number, signal as NodeJS.Signals); } catch { /* gone */ }
-          writeFileSync(release, 'go');
+          sawReady = true;
+          const doRelease = (): void => { writeFileSync(releaseFlag, 'go'); };
+          if (signal !== null) {
+            try { process.kill(child.pid as number, signal as NodeJS.Signals); } catch { /* gone */ }
+          }
+          if (options.onHold) await options.onHold(doRelease);
+          else doRelease();
           return;
         }
         if (Date.now() > deadline) {
-          // Never reached the hold: fail loudly instead of letting the case pass.
           try { child.kill('SIGKILL'); } catch { /* gone */ }
-          reject(new Error('the child never reached the publication hold; the probe did not engage'));
+          reject(new Error('the child never announced the publication hold'));
           return;
         }
-        setTimeout(waitForHold, 2);
+        setTimeout(() => { void poll(); }, 2);
       };
-      setTimeout(waitForHold, 2);
+      setTimeout(() => { void poll(); }, 2);
 
-      child.on('close', (code, sig) => resolve({ engaged, code, signal: sig, stdout, stderr }));
+      child.on('close', (code, sig) => resolve({
+        ready: sawReady,
+        released: existsSync(released),
+        expired: existsSync(expired),
+        code,
+        signal: sig,
+        stdout,
+        stderr,
+      }));
     });
+  }
+
+  /** The handshake held and was released from inside linkSync — the only accepted proof. */
+  function expectHeldThroughout(held: Held): void {
+    expect(held.ready, 'the child never announced the hold').toBe(true);
+    expect(held.expired, 'the hold expired: the signal did not land inside the window').toBe(false);
+    expect(held.released, 'the child never observed the release before linkSync returned').toBe(true);
   }
 
   it.each(['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'] as const)(
@@ -222,24 +272,17 @@ describe('a real interrupt during publication', () => {
     async (signal) => {
       const target = join(dir, 'orchestrator.sqlite');
       const held = await interruptWhileHeld(target, signal);
+      expectHeldThroughout(held);
 
-      // The shim ran inside the real publication path, so the window was entered by construction.
-      expect(held.engaged, 'the publication hold was never reached').toBe(true);
-
-      // The interrupt is visible in the disposition, read from the child's own exit fields.
       expect(held.signal).toBe(signal);
       expect(held.code).toBeNull();
-
-      // No ordinary success is claimed for an interrupted run, and it says what happened.
       expect(held.stdout).toBe('');
       expect(held.stderr).toBe(`db:init interrupted=${signal}\n`);
 
-      // This run's own temporary is gone; the published database is kept — not rolled back.
       expect(readdirSync(dir).filter((n) => n.includes('.dev-orch-init-'))).toEqual([]);
       expect(existsSync(target)).toBe(true);
       expect(lstatSync(target).nlink).toBe(1);
 
-      // The promised repeat run works and the database really holds v1.
       const again = execFileSync(process.execPath, [CLI, 'db:init', '--db', target], { encoding: 'utf8' });
       expect(again).toContain('result=already_at');
       expect(again).toContain(`checksum=${V1_CHECKSUM}`);
@@ -254,6 +297,51 @@ describe('a real interrupt during publication', () => {
     },
     60_000,
   );
+
+  // The handshake's own failure modes. If these did not fail, the cases above could pass without
+  // ever entering the window — which is exactly how the previous version could go false green.
+  describe('the handshake itself fails when the hold does not hold', () => {
+    it('records expiry, and no release, when the parent never releases', async () => {
+      const held = await interruptWhileHeld(join(dir, 'orchestrator.sqlite'), null, {
+        limitMs: 150,
+        onHold: async () => { await new Promise((r) => { setTimeout(r, 400); }); },
+      });
+      expect(held.ready).toBe(true);
+      expect(held.expired, 'expiry must be recorded, not silent').toBe(true);
+      expect(held.released, 'a lapsed hold must not count as released').toBe(false);
+      // And the guard the real cases use rejects it.
+      expect(() => expectHeldThroughout(held)).toThrow();
+    }, 60_000);
+
+    it('does not backdate a release that arrives after the hold lapsed', async () => {
+      const held = await interruptWhileHeld(join(dir, 'orchestrator.sqlite'), null, {
+        limitMs: 100,
+        onHold: async (release) => {
+          await new Promise((r) => { setTimeout(r, 400); });
+          release();
+        },
+      });
+      expect(held.expired).toBe(true);
+      expect(held.released, 'a late release must not be credited').toBe(false);
+      expect(() => expectHeldThroughout(held)).toThrow();
+    }, 60_000);
+
+    // The deadline is monotonic, so moving the wall clock cannot end or extend the hold. Date.now
+    // is replaced in the CHILD, which is where the deadline is measured.
+    it.each([
+      ['forward', 3_600_000],
+      ['backward', -3_600_000],
+    ])('is unaffected by a %s wall-clock jump inside the child', async (_label, skewMs) => {
+      const target = join(dir, 'orchestrator.sqlite');
+      const held = await interruptWhileHeld(target, 'SIGTERM', {
+        limitMs: 15_000,
+        onHold: (release) => { release(); },
+        skewMs,
+      });
+      expectHeldThroughout(held);
+      expect(held.signal).toBe('SIGTERM');
+    }, 60_000);
+  });
 
   it('still reports an ordinary success when no signal is sent', () => {
     const target = join(dir, 'orchestrator.sqlite');
@@ -279,6 +367,64 @@ describe('a real interrupt during publication', () => {
 // supported range (engines: >=22), and the floor is not being raised for it.
 //
 // The case below is the reviewer's, with argv[1] a REAL resolvable path to the module itself.
+// F24. Round 18. The bootstrap split moved the executable, and `scripts.dev-orch` was left
+// pointing at the module that had just been made inert — so `npm run dev-orch -- db:init …`
+// exited 0, printed nothing and created no database, reporting success for work it never did.
+// Neither the suite nor the workflow noticed, because both invoked a hard-coded bin path.
+//
+// These cases therefore start from what the manifest declares, not from a path this file chose:
+// the script as a user would run it, and the `bin` entry as a consumer would resolve it. A future
+// rename that updates only some of the declarations fails here.
+describe('the launchers the manifest declares', () => {
+  const manifest = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')) as {
+    scripts: Record<string, string>;
+    bin: Record<string, string>;
+  };
+  const lockRoot = (JSON.parse(readFileSync(join(REPO, 'package-lock.json'), 'utf8')) as {
+    packages: Record<string, { bin?: Record<string, string> }>;
+  }).packages[''] ?? { bin: undefined };
+
+  it('runs the command through `npm run dev-orch`, as a user would', () => {
+    const target = join(dir, 'via-script.sqlite');
+    const first = execFileSync('npm', ['run', '--silent', 'dev-orch', '--', 'db:init', '--db', target],
+      { cwd: REPO, encoding: 'utf8' });
+    expect(first).toContain('result=applied');
+    expect(first).toContain(`checksum=${V1_CHECKSUM}`);
+    expect(existsSync(target)).toBe(true);
+
+    const second = execFileSync('npm', ['run', '--silent', 'dev-orch', '--', 'db:init', '--db', target],
+      { cwd: REPO, encoding: 'utf8' });
+    expect(second).toContain('result=already_at');
+    expect(second).toContain(`checksum=${V1_CHECKSUM}`);
+
+    const db = new Database(target, { readonly: true });
+    try {
+      expect(db.prepare('SELECT version, checksum FROM schema_migrations').all())
+        .toEqual([{ version: 1, checksum: V1_CHECKSUM }]);
+      expect(db.prepare('SELECT sql FROM sqlite_master').pluck().get()).toBe(V1_CREATE);
+    } finally {
+      db.close();
+    }
+  }, 120_000);
+
+  // npm records the lockfile's copy without the leading "./", so the comparison normalises that
+  // one difference and nothing else: a genuinely different target still fails here.
+  it('declares the same bin target in package.json and the lockfile root', () => {
+    const normalise = (m: Record<string, string> | undefined): Record<string, string> =>
+      Object.fromEntries(Object.entries(m ?? {}).map(([k, v]) => [k, v.replace(/^\.\//, '')]));
+    expect(normalise(lockRoot.bin)).toEqual(normalise(manifest.bin));
+  });
+
+  // The script and the bin entry name different files -- one TypeScript source, one compiled --
+  // but both must be the bootstrap, never the module that does nothing when loaded.
+  it('points every declared launcher at the bootstrap, not the inert module', () => {
+    expect(manifest.scripts['dev-orch']).toContain('src/cli/bin.ts');
+    expect(manifest.bin['dev-orch']).toContain('dist/cli/bin.js');
+    expect(manifest.scripts['dev-orch']).not.toContain('src/cli/index.ts');
+    expect(manifest.bin['dev-orch']).not.toContain('dist/cli/index.js');
+  });
+});
+
 describe('importing the compiled CLI', () => {
   it('does nothing when imported, even with argv naming it and a valid db:init', () => {
     const target = join(dir, 'must-not-exist.sqlite');

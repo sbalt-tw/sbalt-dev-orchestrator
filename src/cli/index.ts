@@ -144,8 +144,10 @@ export function run(argv: readonly string[]): number {
  *
  * What is *not* accepted, and is enforced: an interrupt that was observed is never ignored; no
  * success is reported for an operation that did not complete; a primary error or a cleanup failure
- * is never hidden behind a success; and none of SIGINT, SIGTERM or SIGHUP may strand the temporary
- * and wedge the path — covered by the listeners above and by real-signal regressions.
+ * is never hidden behind a success; and none of the four handled signals — SIGINT, SIGTERM, SIGHUP
+ * or SIGQUIT — may strand the temporary and wedge the path, which the listeners above and the
+ * real-signal regressions cover. Termination by anything else is the separate accepted limitation
+ * recorded in the README, and is not claimed here.
  *
  * An observed interrupt therefore prints no applied/already_at line, and the same signal is
  * re-raised after the listeners are removed, so the exit carries the disposition that was sent.

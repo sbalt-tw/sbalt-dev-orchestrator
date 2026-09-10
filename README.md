@@ -201,7 +201,7 @@ Node versions, and it is not offered as a complete classification of signals.
 This is separate from the reporting limitation below, which is about a signal that *was* handled.
 
 **An interrupt that has been delivered but not yet dispatched may not reach the report.**
-`db:init` installs handlers for SIGINT, SIGTERM and SIGHUP, does its work, then passes through
+`db:init` installs handlers for SIGINT, SIGTERM, SIGHUP and SIGQUIT, does its work, then passes
 the event loop before deciding what to print. That is enough to keep cleanup correct, and enough
 that an interrupt is normally observed — but it is not a guarantee. The operating system can
 deliver a signal *before* the decision and dispatch its JavaScript handler *after* it. This is
@@ -213,8 +213,8 @@ lifecycle with an explicit completion boundary, which this tool has not adopted.
 
 What is **not** accepted, and is enforced by the real-signal regressions: an interrupt that was
 observed is never ignored; success is never reported for an operation that did not complete; a
-primary error or a cleanup failure is never hidden behind a success; and none of SIGINT, SIGTERM
-or SIGHUP may strand this run's temporary and leave the path wedged.
+primary error or a cleanup failure is never hidden behind a success; and none of SIGINT, SIGTERM,
+SIGHUP or SIGQUIT may strand this run's temporary and leave the path wedged.
 
 **A database whose journal was separated from it is accepted.** If the other name is unlinked
 or renamed away while its `-journal` remains, the surviving file has one name and no sidecar
