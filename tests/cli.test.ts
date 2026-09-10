@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, inject } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { assertFreshlyBuilt } from './build-cli.js';
@@ -133,4 +136,93 @@ describe('an ambiguous --db', () => {
     expect(runCli(['db:init', '--db=']).stderr).toContain('E_DB_ARG_MISSING');
     expect(readdirSync(dir)).toEqual([]);
   });
+});
+
+// F22. Round 13. With no listener attached, SIGINT and SIGTERM take their default action and the
+// process dies without unwinding JavaScript, so the `finally` that removes this run's temporary
+// name never ran. A signal between the publication link and that cleanup left the target and the
+// temporary as two names for one inode, and every later run refused with E_DB_TARGET_ALIASED.
+//
+// The signal is a real one from the operating system, sent to a real child running the compiled
+// CLI — not a handler called directly and not an emitted event. It is not fired on a timer: the
+// test polls for the *target* name, which appears exactly when linkSync returns, so the child is
+// inside the window by construction. Measured on this machine the window is 7-9 ms and the signal
+// is sent within about 10 microseconds of the name appearing.
+//
+// The oracle is the resulting state, not the exit disposition. db:init is one synchronous block
+// and Node dispatches signals only between event-loop turns, so with the fix in place the command
+// normally completes before the signal is ever delivered to JavaScript and the child exits 0.
+// Asserting death-by-signal would therefore fail against a working fix. What is asserted is what
+// the defect was about: nothing of this run's own is left behind, and the promised repeat run
+// works. Against this same window the unfixed CLI stranded a temporary in 10 of 10 runs.
+describe('a real interrupt during publication', () => {
+  /** `hit` records that the signal was accepted by the kernel while the child was inside
+   *  the window — not that the child died from it, which a working fix prevents. */
+  interface Attempt { hit: boolean; signal: string | null; code: number | null; stderr: string }
+
+  function interruptDuringPublication(target: string, signal: 'SIGINT' | 'SIGTERM'): Promise<Attempt> {
+    return new Promise((resolve) => {
+      const child = spawn(process.execPath, [CLI, 'db:init', '--db', target], { stdio: 'pipe' });
+      let stderr = '';
+      child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+      // The target name appears exactly when linkSync returns, so its existence is the signal
+      // that the child is between publication and cleanup. This polls rather than using
+      // fs.watch: on macOS that is FSEvents-backed and reports tens of milliseconds late, by
+      // which time the child has usually finished. setImmediate re-arms on every event-loop
+      // turn, which is fast enough to land inside the directory-fsync the window is made of.
+      let fired = false;
+      let delivered = false;
+      const poll = (): void => {
+        if (fired) return;
+        if (existsSync(target)) {
+          fired = true;
+          try {
+            process.kill(child.pid as number, signal);
+            delivered = true;
+          } catch { /* the child had already exited; this attempt did not enter the window */ }
+          return;
+        }
+        setImmediate(poll);
+      };
+      setImmediate(poll);
+
+      child.on('close', (code, sig) => {
+        fired = true;
+        resolve({ hit: delivered, signal: sig, code, stderr });
+      });
+    });
+  }
+
+  it.each(['SIGINT', 'SIGTERM'] as const)(
+    'cleans up its own temporary and stays reopenable after %s',
+    async (signal) => {
+      rmSync(dir, { recursive: true, force: true });
+      mkdirSync(dir, { recursive: true });
+      const target = join(dir, 'orchestrator.sqlite');
+      const attempt = await interruptDuringPublication(target, signal);
+
+      // The window was genuinely entered: the target existed, so linkSync had returned, and the
+      // signal was accepted by the kernel rather than failing with ESRCH on a dead process.
+      expect(attempt.hit, `${signal} was never delivered inside the publication window`).toBe(true);
+
+      // Its own temporary name is gone, and the published target has exactly one name.
+      expect(readdirSync(dir).filter((n) => n.includes('.dev-orch-init-'))).toEqual([]);
+      expect(lstatSync(target).nlink).toBe(1);
+
+      // The promised repeat run works, and the database really holds v1.
+      const again = execFileSync(process.execPath, [CLI, 'db:init', '--db', target], { encoding: 'utf8' });
+      expect(again).toContain('result=already_at');
+      expect(again).toContain(`checksum=${V1_CHECKSUM}`);
+      const db = new Database(target, { readonly: true });
+      try {
+        expect(db.prepare('SELECT version, checksum FROM schema_migrations').all())
+          .toEqual([{ version: 1, checksum: V1_CHECKSUM }]);
+        expect(db.prepare('SELECT sql FROM sqlite_master').pluck().get()).toBe(V1_CREATE);
+      } finally {
+        db.close();
+      }
+    },
+    60_000,
+  );
 });

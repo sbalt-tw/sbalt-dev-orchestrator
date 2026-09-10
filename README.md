@@ -158,11 +158,19 @@ command prints nothing until that decision is made: the successful return value 
 after the cleanup attempt, not before it.
 
 **Contention.** `E_DB_TARGET_ALIASED` says only that the target does not yet meet the
-conditions for classification. It is **retryable**, and it is **not** evidence that the extra
-name is permanent, that the database is damaged, or that a retry will fail again — a slow but
-legitimate publisher produces exactly this outcome. The deadline is measured on a monotonic
-clock and bounds the *waiting strategy*; it is not a promise that the command finishes within
-any number of seconds, since the process can be descheduled and filesystem calls can block.
+conditions for classification. It is **not** evidence that the database is damaged — a slow but
+legitimate publisher produces exactly this outcome, and there a retry is the right response. The
+deadline is measured on a monotonic clock and bounds the *waiting strategy*; it is not a promise
+that the command finishes within any number of seconds, since the process can be descheduled and
+filesystem calls can block.
+
+**It does not follow that every cause is retryable.** The code reports one observation — the
+target currently has more than one name — and several situations produce it. A concurrent
+publisher clears on its own. A hard link made deliberately, or left by something outside this
+tool, does not clear no matter how long you wait, and the target stays refused until that other
+name is removed. Round 13 fixed one such source in this tool: an interrupted run used to strand
+its own temporary name, which wedged the path permanently while the message suggested waiting.
+Interpret the message as "not classifiable right now", not as "waiting will fix it".
 
 ## Accepted limitations
 
@@ -229,9 +237,17 @@ production caller: `db:init` compares a database's recorded checksum against the
 encoder meant promising it stayed injective for arbitrary caller-supplied objects — including
 objects whose property reads run JavaScript — and review found that promise still unmet. Rather
 than keep extending the defence, the promise was withdrawn: `canonicalBytes` and `checksumOf`
-are module-private and this package exposes no importable API at all (`package.json` declares
-only `bin`). Being private is not claimed as a security boundary; it simply means no
-caller-supplied migration reaches that code.
+are module-private and are not emitted as exports. Being private is not claimed as a security
+boundary; it simply means no caller-supplied migration reaches that code.
+
+**The supported interface is the CLI, and only the CLI.** An earlier version of this section
+claimed the package could not be imported at all because `package.json` declares only `bin`.
+That was wrong, and the correction matters more than the claim did: omitting an `exports` map
+does not block deep subpath imports, so a workspace or file-installed consumer can still load a
+compiled module such as `dist/db/migrate.js` directly. No `exports` map has been added. What is
+true is narrower: nothing here is offered as a stable library API, the emitted modules may change
+shape at any time, and `canonicalBytes`/`checksumOf` are genuinely absent from them — so the
+withdrawal holds even though deep imports remain technically possible.
 
 What is still guaranteed is narrower and checkable: the released identity of version 1.
 `V1_DERIVED_CHECKSUM` is computed inside the module from the frozen `V1`, so it fails if `V1`
