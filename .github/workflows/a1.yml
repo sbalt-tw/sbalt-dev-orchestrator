@@ -109,6 +109,20 @@ jobs:
           [ "$(sha256sum "$db" | cut -d' ' -f1)" = "$before" ] \
             || { echo "::error::recognizing an existing database modified it"; exit 1; }
 
+          # The bootstrap split, checked here and not only in the suite. bin.js runs the
+          # command; index.js is a module and must do nothing when loaded, even when argv names
+          # it and carries a valid db:init. This step used to invoke index.js, and when the split
+          # landed it produced no output at all -- exactly the disagreement between CI and the
+          # local harness that this assertion now stops from passing silently in either direction.
+          inert="$work/inert.sqlite"
+          out=$(node --input-type=module \
+            -e "await import(process.argv[1]); process.stdout.write('loaded')" \
+            "$PWD/dist/cli/index.js" db:init --db "$inert")
+          [ "$out" = "loaded" ] \
+            || { echo "::error::importing dist/cli/index.js produced output: $out"; exit 1; }
+          [ ! -e "$inert" ] \
+            || { echo "::error::importing dist/cli/index.js created a database"; exit 1; }
+
           if node dist/cli/bin.js db:init --db relative.sqlite; then exit 1; fi
           : > "$work/empty.sqlite"
           if node dist/cli/bin.js db:init --db "$work/empty.sqlite"; then exit 1; fi
