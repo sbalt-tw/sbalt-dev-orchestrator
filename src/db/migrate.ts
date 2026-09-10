@@ -150,8 +150,15 @@ const isArray = Array.isArray;
 const push = Array.prototype.push;
 const charCodeAt = String.prototype.charCodeAt;
 const bufferFrom = Buffer.from;
-const bufferConcat = Buffer.concat;
+const byteLengthOf = Buffer.byteLength;
 const isSafeInteger = Number.isSafeInteger;
+// Round 11: capturing the method is not enough on its own. `charCodeAt.call(...)` still looks
+// `call` up on the function object, which inherits it from Function.prototype — also replaceable
+// by caller code. Faking it made isWellFormed report every character as 'A', so a lone surrogate
+// passed validation and was then encoded as U+FFFD: exactly the collision this rejects. Every
+// captured function is therefore invoked through this captured Reflect.apply, which is called
+// directly as a value and performs no property lookup on anything the caller can reach.
+const invoke = Reflect.apply;
 
 /**
  * True when every code point is a real character: a high surrogate must be followed by a low
@@ -164,9 +171,9 @@ const isSafeInteger = Number.isSafeInteger;
 function isWellFormed(value: string): boolean {
   const length = value.length;
   for (let index = 0; index < length; index += 1) {
-    const code = charCodeAt.call(value, index);
+    const code = invoke(charCodeAt, value, [index]) as number;
     if (code >= 0xd800 && code <= 0xdbff) {
-      const low = charCodeAt.call(value, index + 1);
+      const low = invoke(charCodeAt, value, [index + 1]) as number;
       if (!(low >= 0xdc00 && low <= 0xdfff)) return false;
       index += 1;
     } else if (code >= 0xdc00 && code <= 0xdfff) {
@@ -215,7 +222,7 @@ export function canonicalBytes(migration: Migration): Buffer {
   }
   const statements: unknown[] = [];
   for (let index = 0; index < count; index += 1) {
-    push.call(statements, (source as readonly unknown[])[index]);
+    invoke(push, statements, [(source as readonly unknown[])[index]]);
   }
   // The capture is only trustworthy if it holds as many elements as the array said it had. A
   // sabotaged push would leave it short, and that must be an error rather than a shorter, still
@@ -231,19 +238,21 @@ export function canonicalBytes(migration: Migration): Buffer {
       throw new InitError('E_INTERNAL');
     }
   }
-  const parts = [
-    bufferFrom(`${CHECKSUM_ALGORITHM}\n`, 'utf8'),
-    bufferFrom(`version:${version}\n`, 'utf8'),
-    bufferFrom(`statements:${count}\n`, 'utf8'),
-  ];
+  // The preimage is assembled as a primitive string and encoded exactly once.
+  //
+  // Round 11: the previous shape built an array of Buffers and concatenated it, which read
+  // `body.length` — a getter inherited from %TypedArray%.prototype, and therefore replaceable by
+  // the same caller code. Faking it collapsed the whole preimage to a single byte, so every
+  // migration would have shared it. Patching that one read would not have been enough, because
+  // Buffer.concat reads the same lengths internally. Strings have no such exposure: `length` is
+  // an own property, concatenation of primitives consults no prototype, and the byte length
+  // comes from the captured Buffer.byteLength rather than from a constructed Buffer.
+  let preimage = `${CHECKSUM_ALGORITHM}\nversion:${version}\nstatements:${count}\n`;
   for (let index = 0; index < count; index += 1) {
-    const body = bufferFrom(statements[index] as string, 'utf8');
-    push.call(parts, bufferFrom(`len:${body.length}\n`, 'utf8'), body, bufferFrom('\n', 'utf8'));
+    const statement = statements[index] as string;
+    preimage += `len:${byteLengthOf(statement, 'utf8')}\n${statement}\n`;
   }
-  // Three parts per statement plus the three-line header: if any of them failed to land, the
-  // preimage is not the one this function claims to have built.
-  if (parts.length !== 3 + count * 3) throw new InitError('E_INTERNAL');
-  return bufferConcat(parts);
+  return bufferFrom(preimage, 'utf8');
 }
 
 export function checksumOf(migration: Migration): string {

@@ -1045,6 +1045,60 @@ describe('checksum input domain', () => {
       // String iteration dispatches through String.prototype[Symbol.iterator], so replacing it
       // could let an ill-formed statement pass validation while Buffer.from encodes the real
       // content. Validation now walks the string by index instead.
+      // F20. Round 11. Capturing the method is not enough: `charCodeAt.call(...)` still looked
+      // `call` up on the function object, inherited from Function.prototype and equally
+      // replaceable. Faking it made every character report as 'A', so a lone surrogate passed
+      // validation and was encoded as U+FFFD — the collision this whole rule exists to prevent.
+      it('still refuses an ill-formed statement when Function.prototype.call is replaced', () => {
+        const realCall = Function.prototype.call;
+        const lying = function (this: unknown, thisArg: unknown, ...args: unknown[]) {
+          if (typeof thisArg === 'string') return 0x41;   // never a surrogate
+          return Reflect.apply(this as (...a: unknown[]) => unknown, thisArg, args);
+        };
+        const statements = ['a', 'b\uD800'];
+        Object.defineProperty(statements, '0', {
+          enumerable: true,
+          configurable: true,
+          get() {
+            Object.defineProperty(Function.prototype, 'call', {
+              configurable: true, writable: true, value: lying,
+            });
+            return 'a';
+          },
+        });
+        withRestored(
+          () => Object.defineProperty(Function.prototype, 'call', {
+            configurable: true, writable: true, value: realCall,
+          }),
+          () => expectCode(() => canonicalBytes({ version: 1, statements }), 'E_INTERNAL'),
+        );
+      });
+
+      // The same class one level further out: `length` on a Buffer is a getter inherited from
+      // %TypedArray%.prototype. Faking it made the old shape write the wrong `len:` prefix, so
+      // the length prefixing that guarantees injectivity no longer held. The preimage is now
+      // assembled as a primitive string, using the captured Buffer.byteLength.
+      it('encodes the same bytes when the TypedArray length getter is replaced', () => {
+        const proto = Object.getPrototypeOf(Uint8Array.prototype) as object;
+        const real = Object.getOwnPropertyDescriptor(proto, 'length')!;
+        const statements = ['AB'];
+        Object.defineProperty(statements, '0', {
+          enumerable: true,
+          configurable: true,
+          get() {
+            Object.defineProperty(proto, 'length', { configurable: true, get: () => 1 });
+            return 'AB';
+          },
+        });
+        // Restore before comparing: reading the result under a poisoned getter would measure
+        // Buffer.prototype.toString rather than what the encoder produced.
+        const sabotaged = withRestored(
+          () => Object.defineProperty(proto, 'length', real),
+          () => canonicalBytes({ version: 1, statements }),
+        );
+        expect(sabotaged).toEqual(canonicalBytes({ version: 1, statements: ['AB'] }));
+      });
+
       it('still refuses an ill-formed statement when String iteration is replaced', () => {
         const real = Object.getOwnPropertyDescriptor(String.prototype, Symbol.iterator)!;
         const statements = ['a\uD800'];
