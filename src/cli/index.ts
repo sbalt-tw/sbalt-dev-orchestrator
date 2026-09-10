@@ -1,12 +1,9 @@
-#!/usr/bin/env node
 // A1 command line: dev-orch db:init --db <absolute-path>
 //
 // --db is required, must be absolute, and is never inferred from the working directory,
 // the environment or a built-in default. Missing parent directories are not created. The
 // command accepts no SQL, no migration path, no registry and no fault-injection parameter.
 
-import { realpathSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
 import { InitError, REASON_TEXT, initialise } from '../db/migrate.js';
 import type { ReasonCode } from '../db/migrate.js';
 
@@ -50,13 +47,26 @@ function parseDbFlag(args: readonly string[]): string {
   return value;
 }
 
-// SIGHUP is here for the same reason as the other two, not as an extra nicety: it is catchable
-// but terminates by default, so before this it took the operating system's default action and
-// stranded the temporary exactly as SIGINT and SIGTERM did — measured at 5 of 5 runs, with every
-// following run then refused as E_DB_TARGET_ALIASED. Closing a terminal or restarting a service
-// sends it. The accepted limitations name only the uncatchable SIGKILL, so leaving SIGHUP out
-// would have kept that boundary quietly wider than it is written.
-const INTERRUPT_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
+// The ordinary "please stop" signals. Each is catchable and terminates by default, so without a
+// listener each took the operating system's default action and stranded this run's temporary —
+// measured, through a deterministic handshake that holds the child between the publication link
+// and its cleanup, with every following run then refused as E_DB_TARGET_ALIASED.
+//
+// Chosen from a measured inventory of this runtime rather than one at a time. Deliberately NOT
+// included: signals the runtime reserves or ignores (SIGUSR1 is Node's debugger signal; SIGPIPE,
+// SIGWINCH, SIGCHLD, SIGURG, SIGCONT, SIGIO, SIGTSTP and SIGXFSZ do not terminate by default);
+// signals that cannot be caught (SIGKILL, SIGSTOP); and the fault signals (SIGSEGV, SIGBUS,
+// SIGILL, SIGFPE, SIGABRT, SIGTRAP, SIGSYS), where the process state is not one in which running
+// JavaScript cleanup can be claimed to be safe.
+//
+// Outside this list, and accepted rather than silently dropped: SIGUSR2, SIGALRM, SIGVTALRM,
+// SIGPROF and SIGXCPU also terminate by default, and each was measured to strand the temporary
+// through the same handshake. Any process able to signal this one can send them directly — they
+// are not conditional on this process enabling a timer or a profiler. They are nonetheless not
+// termination requests, and intercepting them would change behaviour that is not this tool's to
+// change, so the cleanup guarantee is this explicit list of four and no more. The rest is an
+// accepted limitation, recorded in the README, not a claim of coverage.
+const INTERRUPT_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'] as const;
 type InterruptSignal = (typeof INTERRUPT_SIGNALS)[number];
 
 type Executed =
@@ -149,7 +159,7 @@ export function run(argv: readonly string[]): number {
  * earlier run, and nothing is promised for terminations this cannot observe — SIGKILL and power
  * loss remain exactly as accepted before.
  */
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   let interrupted: InterruptSignal | null = null;
   const installed = INTERRUPT_SIGNALS.map((signal) => {
     // The first signal wins; a repeated Ctrl-C changes nothing and starts no second teardown.
@@ -183,27 +193,4 @@ async function main(): Promise<void> {
   process.exitCode = code;
 }
 
-/**
- * True only when this module is the program Node was told to run.
- *
- * Round 15: `main()` used to be invoked unconditionally at module evaluation, so importing the
- * compiled CLI *ran the command* — it read the host's argv, printed `E_DB_ARG_MISSING`, and set
- * the host's exit code. With a valid `--db` in the host's argv it would have created a database.
- * The claim that importing installed nothing was simply false.
- *
- * argv[1] is resolved through realpath before comparing, because the installed `dev-orch` is a
- * symlink in node_modules/.bin: comparing the link path against this module's real URL would
- * make the real bin stop running. A missing or unresolvable argv[1] means this was not started
- * as a program, so the command does not run.
- */
-function startedAsProgram(): boolean {
-  const entry = process.argv[1];
-  if (entry === undefined) return false;
-  try {
-    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
-  } catch {
-    return false;
-  }
-}
 
-if (startedAsProgram()) void main();

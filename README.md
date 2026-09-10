@@ -177,6 +177,29 @@ Interpret the message as "not classifiable right now", not as "waiting will fix 
 These are limits of the approved boundary, not defects that were fixed. None of them is
 claimed to be eliminated.
 
+**Cleanup is guaranteed for four signals, and not beyond them.** `db:init` installs handlers for
+**SIGINT, SIGTERM, SIGHUP and SIGQUIT**. Termination by any other means is not covered: if it
+happens between the publication link and the cleanup, this run's temporary can be left behind as a
+second hard link to the database, and the next `db:init` then returns `E_DB_TARGET_ALIASED`.
+Recovering from that needs an operator to identify and remove the temporary; waiting or retrying
+does not resolve it.
+
+This explicitly covers **SIGUSR2, SIGALRM, SIGXCPU, SIGVTALRM and SIGPROF**, each of which
+terminates by default and was reproduced stranding the temporary. Any process able to signal this
+one can send them — they are not conditional on this process using a timer or a profiler. They are
+excluded because they are not termination requests and intercepting them would change behaviour
+that does not belong to this tool. No claim is made that every catchable signal is handled: the
+guarantee is the list of four above.
+
+The inventory behind that list was measured, not assumed: on macOS (darwin-arm64) with Node
+v24.9.0, by sending each signal to a child both with and without a listener, and by driving the
+compiled CLI through a handshake that holds it between the publication link and its cleanup. The
+categorisation column of that inventory script had a defect and its labels are not relied on here;
+only the two measured columns are. None of this is evidence of behaviour on other platforms or
+Node versions, and it is not offered as a complete classification of signals.
+
+This is separate from the reporting limitation below, which is about a signal that *was* handled.
+
 **An interrupt that has been delivered but not yet dispatched may not reach the report.**
 `db:init` installs handlers for SIGINT, SIGTERM and SIGHUP, does its work, then passes through
 the event loop before deciding what to print. That is enough to keep cleanup correct, and enough

@@ -16,7 +16,7 @@
     "arm64"
   ],
   "bin": {
-    "dev-orch": "./dist/cli/index.js"
+    "dev-orch": "./dist/cli/bin.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

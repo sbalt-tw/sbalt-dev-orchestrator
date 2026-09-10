@@ -15,7 +15,7 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const REPO_DIST = join(REPO, 'dist');
 
 declare module 'vitest' {
-  export interface ProvidedContext { cliPath: string }
+  export interface ProvidedContext { cliPath: string; cliModulePath: string }
 }
 
 /** Rejects anything under the repository's own dist/, so a stale artifact cannot be used. */
@@ -36,7 +36,10 @@ export default function setup({ provide }: GlobalSetupContext): () => void {
       [join(REPO, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.build.json', '--outDir', out],
       { cwd: REPO, stdio: 'inherit' },
     );
-    provide('cliPath', assertFreshlyBuilt(join(out, 'cli', 'index.js')));
+    // The executable is bin.js, not index.js: Round 16 split the bootstrap out so that the
+    // module can be imported without running the command.
+    provide('cliPath', assertFreshlyBuilt(join(out, 'cli', 'bin.js')));
+    provide('cliModulePath', assertFreshlyBuilt(join(out, 'cli', 'index.js')));
   } catch (error) {
     // A failed build must not leave its directory behind for a later run to find.
     rmSync(out, { recursive: true, force: true });

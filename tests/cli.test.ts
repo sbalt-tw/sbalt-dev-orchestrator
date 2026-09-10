@@ -2,10 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, inject } from 'vitest';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync,
+  existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync,
   symlinkSync, writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { assertFreshlyBuilt } from './build-cli.js';
 import Database from 'better-sqlite3';
@@ -13,6 +14,10 @@ import { V1_CHECKSUM, V1_CREATE } from '../src/db/migrate.js';
 
 // Built by this run into its own directory; never the repository's dist/.
 const CLI = assertFreshlyBuilt(inject('cliPath'));
+// The importable module, as distinct from the executable above.
+const MODULE = assertFreshlyBuilt(inject('cliModulePath'));
+// Test-side loader that holds the child inside the publication window.
+const REGISTER = fileURLToPath(new URL('./handshake/register.mjs', import.meta.url));
 
 interface Result { status: number; stdout: string; stderr: string }
 
@@ -138,109 +143,103 @@ describe('an ambiguous --db', () => {
   });
 });
 
-// F22. Round 13. With no listener attached, SIGINT and SIGTERM take their default action and the
-// process dies without unwinding JavaScript, so the `finally` that removes this run's temporary
-// name never ran. A signal between the publication link and that cleanup left the target and the
-// temporary as two names for one inode, and every later run refused with E_DB_TARGET_ALIASED.
+// F22. Round 13/16. Without a listener, an ordinary termination signal takes the operating
+// system's default action and the process dies without unwinding JavaScript, so the `finally` that
+// removes this run's temporary never runs. The target and the temporary are then two names for one
+// inode, and every later run refuses with E_DB_TARGET_ALIASED until someone deletes the temporary
+// by hand.
 //
-// The signal is a real one from the operating system, sent to a real child running the compiled
-// CLI — not a handler called directly and not an emitted event. It is not fired on a timer: the
-// test polls for the *target* name, which appears exactly when linkSync returns.
+// Round 16 made this deterministic. Earlier versions polled for the target name and fired when it
+// appeared, which proves only that linkSync returned — the target persists after cleanup, so a
+// late poll would still "succeed", and an implementation that installed its handlers only after
+// the protected work could satisfy every assertion. That is a false green, and it is the exact
+// shape being tested for.
 //
-// Honest about what that trigger proves. The target name persists after cleanup, so its existence
-// alone does not establish that the child is still between publication and cleanup — a late poll
-// could fire after cleanup and the kill would still succeed. What makes it land inside the window
-// is timing that was measured rather than assumed: 7-9 ms from the name appearing to the child
-// exiting, with the signal sent about 10 microseconds after it appears. The discriminating
-// evidence is the mutation, not the trigger: against this same setup the CLI without the
-// listeners stranded a temporary in 10 of 10 runs, and removing the reporting and re-raise while
-// keeping the listeners turns these cases red on the exit signal.
-//
-// Scope. These cases cover an interrupt that was *observed*: the disposition, the absence of any
-// success line, the cleanup, and the reopen. They do not cover — and cannot close — the accepted
-// limitation that a signal delivered before the decision may have its handler dispatched after
-// it, in which case the completed result is reported and the disposition is not guaranteed. That
-// residual is documented in the README and in the CLI's own comment, and is recorded as
-// OPEN/ACCEPTED rather than fixed.
+// Instead a test-side loader redirects `node:fs` inside the child to a shim that wraps linkSync:
+// after the real link succeeds and before returning to production code, it writes a ready file and
+// then blocks. The parent sends the real signal while the child is held there, and only then
+// releases it. A plain `fs.linkSync = ...` patch was measured NOT to work — production uses an ESM
+// named import, whose binding does not observe a later property assignment — so the specifier is
+// redirected instead. The ready file is also the proof that the shim is genuinely the function
+// production calls: if it never appears, the test fails rather than passing quietly.
 describe('a real interrupt during publication', () => {
-  /** `hit` records that the signal was accepted by the kernel while the child was inside the
-   *  window; the disposition and the output are asserted separately. */
-  interface Attempt {
-    hit: boolean;
+  interface Held {
+    engaged: boolean;
     code: number | null;
     signal: string | null;
     stdout: string;
     stderr: string;
   }
 
-  function interruptDuringPublication(
-    target: string,
-    signal: 'SIGINT' | 'SIGTERM' | 'SIGHUP',
-  ): Promise<Attempt> {
-    return new Promise((resolve) => {
-      const child = spawn(process.execPath, [CLI, 'db:init', '--db', target], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+  function interruptWhileHeld(target: string, signal: string): Promise<Held> {
+    return new Promise((resolve, reject) => {
+      const ready = join(dir, '.ready');
+      const release = join(dir, '.release');
+      const child = spawn(
+        process.execPath,
+        ['--import', REGISTER, CLI, 'db:init', '--db', target],
+        {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: {
+            ...process.env,
+            A1_HANDSHAKE_READY: ready,
+            A1_HANDSHAKE_RELEASE: release,
+            A1_HANDSHAKE_LIMIT_MS: '15000',
+          },
+        },
+      );
       let stdout = '';
       let stderr = '';
-      child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-      child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+      child.stdout.on('data', (c: Buffer) => { stdout += c.toString(); });
+      child.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
 
-      // The target name appears exactly when linkSync returns, so its existence means the child
-      // is between publication and cleanup. Polling rather than fs.watch: on macOS that is
-      // FSEvents-backed and reports tens of milliseconds late, long after this window closes.
-      let fired = false;
-      let delivered = false;
-      const poll = (): void => {
-        if (fired) return;
-        if (existsSync(target)) {
-          fired = true;
-          try {
-            process.kill(child.pid as number, signal);
-            delivered = true;
-          } catch { /* the child had already exited; this attempt did not enter the window */ }
+      let engaged = false;
+      const deadline = Date.now() + 20_000;
+      const waitForHold = (): void => {
+        if (existsSync(ready)) {
+          engaged = true;
+          // The child is provably between the publication link and its cleanup.
+          try { process.kill(child.pid as number, signal as NodeJS.Signals); } catch { /* gone */ }
+          writeFileSync(release, 'go');
           return;
         }
-        setImmediate(poll);
+        if (Date.now() > deadline) {
+          // Never reached the hold: fail loudly instead of letting the case pass.
+          try { child.kill('SIGKILL'); } catch { /* gone */ }
+          reject(new Error('the child never reached the publication hold; the probe did not engage'));
+          return;
+        }
+        setTimeout(waitForHold, 2);
       };
-      setImmediate(poll);
+      setTimeout(waitForHold, 2);
 
-      child.on('close', (code, sig) => {
-        fired = true;
-        resolve({ hit: delivered, code, signal: sig, stdout, stderr });
-      });
+      child.on('close', (code, sig) => resolve({ engaged, code, signal: sig, stdout, stderr }));
     });
   }
 
-  // SIGHUP is catchable but terminates by default, so before Round 15 it stranded the
-  // temporary exactly as the other two did.
-  it.each(['SIGINT', 'SIGTERM', 'SIGHUP'] as const)(
-    'reports %s, keeps the published database and cleans up its own temporary',
+  it.each(['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'] as const)(
+    'reports %s from inside the publication window and cleans up its own temporary',
     async (signal) => {
-      rmSync(dir, { recursive: true, force: true });
-      mkdirSync(dir, { recursive: true });
       const target = join(dir, 'orchestrator.sqlite');
-      const attempt = await interruptDuringPublication(target, signal);
+      const held = await interruptWhileHeld(target, signal);
 
-      // The window was genuinely entered: the target existed, so linkSync had returned, and the
-      // kernel accepted the signal rather than failing with ESRCH on a dead process.
-      expect(attempt.hit, `${signal} was never delivered inside the publication window`).toBe(true);
+      // The shim ran inside the real publication path, so the window was entered by construction.
+      expect(held.engaged, 'the publication hold was never reached').toBe(true);
 
-      // The interrupt is visible in the disposition. Read from the child's own exit fields, not
-      // from a shell's 130/143 translation.
-      expect(attempt.signal).toBe(signal);
-      expect(attempt.code).toBeNull();
+      // The interrupt is visible in the disposition, read from the child's own exit fields.
+      expect(held.signal).toBe(signal);
+      expect(held.code).toBeNull();
 
-      // An interrupted run does not claim an ordinary success, and says what happened.
-      expect(attempt.stdout).toBe('');
-      expect(attempt.stderr).toBe(`db:init interrupted=${signal}\n`);
+      // No ordinary success is claimed for an interrupted run, and it says what happened.
+      expect(held.stdout).toBe('');
+      expect(held.stderr).toBe(`db:init interrupted=${signal}\n`);
 
-      // Its own temporary is gone. The published database is kept: an interrupt is not a rollback.
+      // This run's own temporary is gone; the published database is kept — not rolled back.
       expect(readdirSync(dir).filter((n) => n.includes('.dev-orch-init-'))).toEqual([]);
       expect(existsSync(target)).toBe(true);
       expect(lstatSync(target).nlink).toBe(1);
 
-      // The promised repeat run works, and the database really holds v1.
+      // The promised repeat run works and the database really holds v1.
       const again = execFileSync(process.execPath, [CLI, 'db:init', '--db', target], { encoding: 'utf8' });
       expect(again).toContain('result=already_at');
       expect(again).toContain(`checksum=${V1_CHECKSUM}`);
@@ -265,31 +264,42 @@ describe('a real interrupt during publication', () => {
   });
 });
 
-// F23. Round 15. The module used to call main() at evaluation time, so importing the compiled CLI
-// ran the command: it read the host's argv, printed a reason code and set the host's exit code.
-// The dangerous shape is a host whose argv happens to be a valid db:init, which would have created
-// a database in the importer's process. The probe runs in its own child so the host argv can be
-// controlled, and it reports what it observed rather than asserting inside the child.
+// F23. Round 15/16. The module used to call main() at evaluation time, so importing the compiled
+// CLI ran the command: it read the host's argv, printed a reason code and set the host's exit
+// code, and with a valid --db it created a database in the importing process.
+//
+// Round 15 tried to fix that by comparing process.argv[1] against this module's resolved path.
+// That is not a fact about the module — under `node -e`, argv[1] is just the first positional
+// argument, so passing the CLI's own path made the check true and the command ran anyway. The
+// Round 15 regression missed it because its argv[1] was the string "db:init", which does not
+// resolve, so it exercised the guard's error branch instead of the equal-path branch.
+//
+// Round 16 stopped guessing: the bootstrap lives in bin.js and index.js is a plain module.
+// `import.meta.main` would answer the question directly but is not available across the whole
+// supported range (engines: >=22), and the floor is not being raised for it.
+//
+// The case below is the reviewer's, with argv[1] a REAL resolvable path to the module itself.
 describe('importing the compiled CLI', () => {
-  it('does nothing: no command, no listeners, no output, no exit code, no database', () => {
+  it('does nothing when imported, even with argv naming it and a valid db:init', () => {
     const target = join(dir, 'must-not-exist.sqlite');
     const probe = [
       "import { existsSync } from 'node:fs';",
-      `const m = await import(${JSON.stringify(CLI)});`,
+      `const m = await import(${JSON.stringify(MODULE)});`,
       'await new Promise((r) => setTimeout(r, 50));',
       'process.stdout.write(JSON.stringify({',
-      "  listeners: process.listenerCount('SIGINT') + process.listenerCount('SIGTERM')",
-      "    + process.listenerCount('SIGHUP'),",
+      "  listeners: ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT']",
+      '    .reduce((n, s) => n + process.listenerCount(s), 0),',
       '  exitCode: process.exitCode ?? null,',
       `  created: existsSync(${JSON.stringify(target)}),`,
       '  exports: Object.keys(m).sort(),',
       '}));',
     ].join('\n');
 
-    // The host argv is a *valid* db:init command for a path that must not come into existence.
+    // argv[1] is the module's own resolvable path — the shape that defeated the Round 15 guard —
+    // and the remaining arguments are a valid db:init for a database that must not appear.
     const raw = execFileSync(
       process.execPath,
-      ['--input-type=module', '-e', probe, 'db:init', '--db', target],
+      ['--input-type=module', '-e', probe, MODULE, 'db:init', '--db', target],
       { encoding: 'utf8' },
     );
     const seen = JSON.parse(raw.slice(raw.indexOf('{'))) as {
@@ -301,8 +311,8 @@ describe('importing the compiled CLI', () => {
     expect(seen.created).toBe(false);
     expect(existsSync(target)).toBe(false);
     expect(readdirSync(dir)).toEqual([]);
-    // The module is still importable and still exports run; only the side effects are gone.
-    expect(seen.exports).toEqual(['run']);
+    // Still importable, and still exporting what the bootstrap needs.
+    expect(seen.exports).toEqual(['main', 'run']);
   });
 
   it('still runs when started as a program through a symlink, as the installed bin is', () => {
