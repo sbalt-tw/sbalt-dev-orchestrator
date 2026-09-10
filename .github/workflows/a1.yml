@@ -98,20 +98,20 @@ jobs:
           mkdir -p "$work"
           db="$work/orchestrator.sqlite"
 
-          first=$(node dist/cli/index.js db:init --db "$db")
-          second=$(node dist/cli/index.js db:init --db "$db")
+          first=$(node dist/cli/bin.js db:init --db "$db")
+          second=$(node dist/cli/bin.js db:init --db "$db")
           printf '%s\n%s\n' "$first" "$second"
           case "$first"  in db:init\ result=applied\ version=1\ checksum=*) ;;    *) exit 1 ;; esac
           case "$second" in db:init\ result=already_at\ version=1\ checksum=*) ;; *) exit 1 ;; esac
 
           before=$(sha256sum "$db" | cut -d' ' -f1)
-          node dist/cli/index.js db:init --db "$db" >/dev/null
+          node dist/cli/bin.js db:init --db "$db" >/dev/null
           [ "$(sha256sum "$db" | cut -d' ' -f1)" = "$before" ] \
             || { echo "::error::recognizing an existing database modified it"; exit 1; }
 
-          if node dist/cli/index.js db:init --db relative.sqlite; then exit 1; fi
+          if node dist/cli/bin.js db:init --db relative.sqlite; then exit 1; fi
           : > "$work/empty.sqlite"
-          if node dist/cli/index.js db:init --db "$work/empty.sqlite"; then exit 1; fi
+          if node dist/cli/bin.js db:init --db "$work/empty.sqlite"; then exit 1; fi
           [ ! -s "$work/empty.sqlite" ] || { echo "::error::a refused empty file was written to"; exit 1; }
 
           # Independent processes, started together against one fresh path. Every racer must
@@ -121,7 +121,7 @@ jobs:
           mkdir -p "$work/racedir"
           pids=""
           for i in 1 2 3 4 5 6; do
-            node dist/cli/index.js db:init --db "$race" >"$work/race.$i.out" 2>"$work/race.$i.err" &
+            node dist/cli/bin.js db:init --db "$race" >"$work/race.$i.out" 2>"$work/race.$i.err" &
             pids="$pids $!"
           done
           rc=0
