@@ -5,7 +5,7 @@ import {
   existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync,
   symlinkSync, writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 // The repository root, so the manifest is read from where npm would read it.
@@ -189,6 +189,12 @@ describe('a real interrupt during publication', () => {
     onHold?: (release: () => void) => void | Promise<void>;
     /** Moves the child's Date.now, to show the hold's deadline does not depend on it. */
     skewMs?: number;
+    /**
+     * Installs a listener for this signal before the command starts, belonging to something other
+     * than the command — the shape a preloaded module or an embedder produces. It is never
+     * removed, so the default action stays suppressed for the whole run.
+     */
+    foreignListener?: string;
   }
 
   function interruptWhileHeld(
@@ -205,9 +211,14 @@ describe('a real interrupt during publication', () => {
       const released = join(dir, `.released-${id}`);
       const expired = join(dir, `.expired-${id}`);
 
+      // Evaluated before the entry point, and left in place: nothing in the run removes it.
+      const foreign = options.foreignListener === undefined ? [] : ['--import',
+        `data:text/javascript,${encodeURIComponent(
+          `process.on(${JSON.stringify(options.foreignListener)}, () => {});`)}`];
+
       const child = spawn(
         process.execPath,
-        ['--import', REGISTER, CLI, 'db:init', '--db', target],
+        [...foreign, '--import', REGISTER, CLI, 'db:init', '--db', target],
         {
           stdio: ['ignore', 'pipe', 'pipe'],
           env: {
@@ -353,12 +364,94 @@ describe('a real interrupt during publication', () => {
     }, 60_000);
   });
 
+  // Round 18. The exit used to be inferred from the re-raised signal's default action — but that
+  // action does not apply while any other listener for the same signal is attached, and then
+  // `kill` simply returned and the command exited 0: success for an interrupted run. The clean
+  // child the cases above use cannot expose this, because in it the only listeners are the
+  // command's own. Here something else got there first and never lets go.
+  //
+  // The expected codes are written out rather than derived from the product's own table, so this
+  // fails if that table is wrong as well as if the disposition is lost.
+  it.each([
+    ['SIGINT', 130],
+    ['SIGTERM', 143],
+    ['SIGHUP', 129],
+    ['SIGQUIT', 131],
+  ] as const)(
+    'exits %s with its shell disposition even when a foreign listener suppresses the default action',
+    async (signal, expected) => {
+      const target = join(dir, 'orchestrator.sqlite');
+      const held = await interruptWhileHeld(target, signal, { foreignListener: signal });
+      expectHeldThroughout(held);
+
+      // Death by signal is impossible here, so the disposition has to be carried by the code.
+      expect(held.signal).toBeNull();
+      expect(held.code).toBe(expected);
+      expect(held.stdout).toBe('');
+      expect(held.stderr).toBe(`db:init interrupted=${signal}\n`);
+
+      // Everything else the interrupted path promises is unchanged by the foreign listener.
+      expect(readdirSync(dir).filter((n) => n.includes('.dev-orch-init-'))).toEqual([]);
+      expect(existsSync(target)).toBe(true);
+      expect(lstatSync(target).nlink).toBe(1);
+    },
+    60_000,
+  );
+
   it('still reports an ordinary success when no signal is sent', () => {
     const target = join(dir, 'orchestrator.sqlite');
     const first = execFileSync(process.execPath, [CLI, 'db:init', '--db', target], { encoding: 'utf8' });
     expect(first).toContain('result=applied');
     expect(first).toContain(`checksum=${V1_CHECKSUM}`);
     expect(readdirSync(dir)).toEqual(['orchestrator.sqlite']);
+  });
+});
+
+// F25. Round 18. Reporting wrote to stdout with no handler for that stream's asynchronous `error`
+// event, so a consumer that closed the pipe first turned a completed operation into an uncaught
+// EPIPE: a native stack, internal frames and the absolute path of the installation, printed
+// straight past the fixed diagnostic boundary that exists precisely to keep those off stderr.
+// `dev-orch db:init … | head -1` is enough to produce it.
+describe('an output pipe closed before the line is written', () => {
+  /** Runs the CLI with its output end destroyed immediately, and collects what it did emit. */
+  function withClosedOutput(args: string[], close: 'stdout' | 'stderr'): Promise<{
+    code: number | null; signal: NodeJS.Signals | null; stderr: string;
+  }> {
+    return new Promise((resolve) => {
+      const child = spawn(process.execPath, [CLI, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stderr = '';
+      // Whichever end is left open is still read, so anything the command prints is captured.
+      if (close === 'stdout') child.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
+      child[close].destroy();
+      child.on('close', (code, signal) => { resolve({ code, signal, stderr }); });
+    });
+  }
+
+  it('reports a successful run as a fixed failure, with no stack and no installation path', async () => {
+    execFileSync(process.execPath, [CLI, 'db:init', '--db', dbPath]);   // so this run classifies
+    const seen = await withClosedOutput(['db:init', '--db', dbPath], 'stdout');
+
+    expect(seen.signal).toBeNull();
+    // Non-zero, because the result line never reached the operator -- but a fixed disposition.
+    expect(seen.code).toBe(1);
+    expect(seen.stderr).toBe('');
+    expect(seen.stderr).not.toMatch(/\n\s+at /);
+    expect(seen.stderr).not.toContain('EPIPE');
+    expect(seen.stderr).not.toContain(REPO);
+
+    // The database it had already published is untouched by any of this.
+    expect(lstatSync(dbPath).nlink).toBe(1);
+    expect(readdirSync(dir)).toEqual(['orchestrator.sqlite']);
+  });
+
+  // Weaker on purpose, and recorded as such: with stderr itself gone there is nowhere for an
+  // uncaught error to be printed, so this case does not go red when the handler is removed. It
+  // holds the refusal path to its ordinary contract while the diagnostic sink is broken.
+  it('still refuses, and creates nothing, when stderr is the closed pipe', async () => {
+    const seen = await withClosedOutput(['db:init', '--db', 'relative.sqlite'], 'stderr');
+    expect(seen.signal).toBeNull();
+    expect(seen.code).toBe(1);
+    expect(existsSync(join(dir, 'relative.sqlite'))).toBe(false);
   });
 });
 
@@ -432,6 +525,19 @@ describe('the launchers the manifest declares', () => {
     expect(manifest.bin['dev-orch']).toContain('dist/cli/bin.js');
     expect(manifest.scripts['dev-orch']).not.toContain('src/cli/index.ts');
     expect(manifest.bin['dev-orch']).not.toContain('dist/cli/index.js');
+  });
+
+  // Round 18: comparing declarations to each other was the whole defect -- two equally wrong
+  // strings still matched. The load-bearing check is elsewhere and is execution, not comparison:
+  // the global build resolves `bin.dev-orch`, refuses a target the build did not produce, and
+  // hands that exact file to every process this suite spawns, so a wrong declaration fails the
+  // run. This case only catches a future change that goes back to choosing the path here.
+  it('spawns the executable that `bin` declares, re-rooted onto this run’s build', () => {
+    const declared = (manifest.bin['dev-orch'] ?? '').replace(/^\.\//, '');
+    expect(declared.startsWith('dist/')).toBe(true);
+    expect(CLI.endsWith(sep + declared.slice('dist/'.length))).toBe(true);
+    expect(CLI).not.toBe(MODULE);
+    expect(existsSync(CLI)).toBe(true);
   });
 });
 

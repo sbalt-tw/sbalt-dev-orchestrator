@@ -4,6 +4,7 @@
 // the environment or a built-in default. Missing parent directories are not created. The
 // command accepts no SQL, no migration path, no registry and no fault-injection parameter.
 
+import { constants } from 'node:os';
 import { InitError, REASON_TEXT, initialise } from '../db/migrate.js';
 import type { ReasonCode } from '../db/migrate.js';
 
@@ -69,6 +70,15 @@ function parseDbFlag(args: readonly string[]): string {
 const INTERRUPT_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'] as const;
 type InterruptSignal = (typeof INTERRUPT_SIGNALS)[number];
 
+// The conventional shell disposition for "terminated by this signal", taken from the runtime's own
+// table rather than written out here, so the numbers are this platform's and not a guess.
+const SIGNAL_EXIT: Record<InterruptSignal, number> = {
+  SIGINT: 128 + constants.signals.SIGINT,
+  SIGTERM: 128 + constants.signals.SIGTERM,
+  SIGHUP: 128 + constants.signals.SIGHUP,
+  SIGQUIT: 128 + constants.signals.SIGQUIT,
+};
+
 type Executed =
   | { readonly ok: true; readonly outcome: ReturnType<typeof initialise> }
   | { readonly ok: false; readonly code: ReasonCode };
@@ -93,6 +103,32 @@ function report(result: Executed): number {
 
 export function run(argv: readonly string[]): number {
   return report(execute(argv));
+}
+
+/**
+ * Keeps a failed output stream inside the fixed diagnostic boundary above.
+ *
+ * Round 18: reporting wrote to stdout without handling that stream's asynchronous `error` event.
+ * A consumer that goes away before the line is written — `dev-orch db:init … | head -1`, a reader
+ * that was killed — made the write emit EPIPE with no listener, which Node raises as an uncaught
+ * exception: a native stack, internal frames and the absolute path of the installation, printed
+ * straight past `fail`, for an operation that had already completed successfully. Reproduced by
+ * destroying the child's stdout while it classified a valid v1 database.
+ *
+ * There is nothing to report through a sink that has gone away, and stderr may be the same broken
+ * pipe, so nothing further is written: the failure is absorbed and the exit becomes a fixed 1.
+ * Silence here is not hiding an error — the operation's own outcome is unchanged and, for the
+ * write that failed, the operator's own end of the pipe is what closed. A non-zero exit is still
+ * the honest answer, because the result line did not reach them.
+ *
+ * Installed by `main` only. `run` is the pure entry point and stays free of process-level effects.
+ */
+function absorbOutputStreamFailures(): void {
+  for (const stream of [process.stdout, process.stderr]) {
+    stream.on('error', () => {
+      process.exitCode = 1;
+    });
+  }
 }
 
 /**
@@ -162,6 +198,7 @@ export function run(argv: readonly string[]): number {
  * loss remain exactly as accepted before.
  */
 export async function main(): Promise<void> {
+  absorbOutputStreamFailures();
   let interrupted: InterruptSignal | null = null;
   const installed = INTERRUPT_SIGNALS.map((signal) => {
     // The first signal wins; a repeated Ctrl-C changes nothing and starts no second teardown.
@@ -186,8 +223,26 @@ export async function main(): Promise<void> {
     if (!result.ok) fail(result.code);
     process.stderr.write(`db:init interrupted=${interrupted}\n`);
     uninstall();
+
+    // Re-raising is how the exit normally carries the disposition that was sent: with this
+    // command's listeners gone, the default action terminates the process here and the exit
+    // reports the signal itself.
+    //
+    // Round 18: taking that for granted was wrong whenever *another* listener for the same signal
+    // is still attached — a preloaded module, an embedder, a supervisor's shim. Then the default
+    // action does not apply, `kill` simply returns, and this fell through to an ordinary exit 0:
+    // success reported for a run the operator had interrupted. Reproduced with nothing more exotic
+    // than a preloaded no-op SIGTERM listener, and SIGTERM is one of the four signals whose
+    // handling is guaranteed, so neither accepted limitation covered it. A foreign listener holding
+    // an open handle could also have left the command running instead of exiting at all.
+    //
+    // So the disposition is decided here rather than inferred from whether the default action
+    // happened to fire. The exit code is set before re-raising, which is what the process would
+    // fall back to anyway, and the explicit exit below is reached only when something else
+    // suppressed the signal.
+    process.exitCode = SIGNAL_EXIT[interrupted];
     process.kill(process.pid, interrupted);
-    return;
+    process.exit(SIGNAL_EXIT[interrupted]);
   }
 
   const code = report(result);

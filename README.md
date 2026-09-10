@@ -216,6 +216,20 @@ observed is never ignored; success is never reported for an operation that did n
 primary error or a cleanup failure is never hidden behind a success; and none of SIGINT, SIGTERM,
 SIGHUP or SIGQUIT may strand this run's temporary and leave the path wedged.
 
+An observed interrupt exits with that signal's own disposition, and does so whether or not the
+default action still applies. Round 18: it previously *inferred* the disposition by re-raising the
+signal, which does nothing while any other listener for it is attached — a preloaded module, an
+embedder — so an interrupted run could exit 0. The exit is now decided rather than inferred: death
+by signal where the default action applies, and otherwise the conventional `128 + signal` code.
+
+**Output that cannot be written is a fixed, silent failure.** If the consumer closes the pipe
+before the line is written — `dev-orch db:init … | head -1`, a reader that was killed — the write
+fails with EPIPE. Round 18: that was an unhandled stream error, so it surfaced as a native stack
+with internal frames and the absolute path of the installation, past the fixed diagnostic boundary
+that exists to keep exactly that off stderr. Nothing further is written now, since the sink the
+message would go to is the one that failed, and the command exits 1. The operation's own outcome
+is unchanged: a database that was published stays published.
+
 **A database whose journal was separated from it is accepted.** If the other name is unlinked
 or renamed away while its `-journal` remains, the surviving file has one name and no sidecar
 of its own, and is reported `already_at` while that inode still has a transaction to roll
