@@ -227,11 +227,18 @@ describe('a real interrupt during publication', () => {
       child.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
 
       let sawReady = false;
+      // The child can exit before a scheduled poll fires; without this the stale poll would run
+      // after the test's directory had been torn down and fail an unrelated case with ENOENT.
+      let settled = false;
       const deadline = Date.now() + 30_000;
       const poll = async (): Promise<void> => {
+        if (settled) return;
         if (existsSync(ready)) {
           sawReady = true;
-          const doRelease = (): void => { writeFileSync(releaseFlag, 'go'); };
+          const doRelease = (): void => {
+            if (settled) return;
+            try { writeFileSync(releaseFlag, 'go'); } catch { /* the child is already gone */ }
+          };
           if (signal !== null) {
             try { process.kill(child.pid as number, signal as NodeJS.Signals); } catch { /* gone */ }
           }
@@ -248,7 +255,9 @@ describe('a real interrupt during publication', () => {
       };
       setTimeout(() => { void poll(); }, 2);
 
-      child.on('close', (code, sig) => resolve({
+      child.on('close', (code, sig) => {
+        settled = true;   // stops any pending poll from touching a torn-down directory
+        resolve({
         ready: sawReady,
         released: existsSync(released),
         expired: existsSync(expired),
@@ -256,7 +265,8 @@ describe('a real interrupt during publication', () => {
         signal: sig,
         stdout,
         stderr,
-      }));
+        });
+      });
     });
   }
 
