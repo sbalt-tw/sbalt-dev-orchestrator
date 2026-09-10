@@ -223,11 +223,21 @@ npm test          # builds a CLI for the run; does not read or require dist/
 npm run build
 ```
 
-The migration checksum accepts a positive safe-integer version and well-formed statements;
-anything else is refused rather than silently coerced. The encoding is injective over that
-domain — a property of the encoding, not of SHA-256: no claim is made that a hash collision
-is mathematically impossible. A1's only production caller is the frozen v1 constant, which
-cannot supply an illegal value.
+**The migration encoder is internal, and no longer offered for general use.** It had no
+production caller: `db:init` compares a database's recorded checksum against the frozen
+`V1_CHECKSUM` literal and never encodes anything at run time. Exporting a general-purpose
+encoder meant promising it stayed injective for arbitrary caller-supplied objects — including
+objects whose property reads run JavaScript — and review found that promise still unmet. Rather
+than keep extending the defence, the promise was withdrawn: `canonicalBytes` and `checksumOf`
+are module-private and this package exposes no importable API at all (`package.json` declares
+only `bin`). Being private is not claimed as a security boundary; it simply means no
+caller-supplied migration reaches that code.
+
+What is still guaranteed is narrower and checkable: the released identity of version 1.
+`V1_DERIVED_CHECKSUM` is computed inside the module from the frozen `V1`, so it fails if `V1`
+and its literal ever drift apart, and the suite additionally reads the checksum back out of a
+database produced by the real `initialise`. No claim is made that a SHA-256 collision is
+mathematically impossible; that remains an assumption about the hash.
 
 `npm test` and a bare `vitest run` are equivalent — the suite compiles what it needs into a
 directory belonging to that run and removes it afterwards, so it never depends on, and never

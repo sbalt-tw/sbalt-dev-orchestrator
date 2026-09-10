@@ -183,7 +183,22 @@ function isWellFormed(value: string): boolean {
   return true;
 }
 
-export function canonicalBytes(migration: Migration): Buffer {
+/**
+ * Module-private. Round 12 withdrew the general-purpose encoder from this module's interface.
+ *
+ * It had no production caller — the CLI compares a database's recorded checksum against the
+ * frozen V1_CHECKSUM literal and never encodes anything — so the only thing the export bought
+ * was an obligation to stay injective for arbitrary caller-supplied objects whose property
+ * reads execute JavaScript. Round 12 showed that obligation was still unmet: an accessor
+ * installed at Array.prototype[0] makes native push invoke the inherited setter, advancing
+ * length without creating an own element, so the capture's completeness check passes while both
+ * later reads go through the inherited getter.
+ *
+ * Being private is NOT a security boundary and is not claimed as one; the point is that no
+ * caller-supplied migration reaches this code any more, so the promise is retired rather than
+ * strengthened. The inherited-index defect is recorded as open against the withdrawn contract.
+ */
+function canonicalBytes(migration: Migration): Buffer {
   // A JavaScript string may hold an unpaired surrogate, and UTF-8 encoding replaces it with
   // U+FFFD. Two different declared migrations could therefore encode to the same bytes, so
   // an ill-formed statement is refused rather than silently rewritten. Two separate claims,
@@ -242,11 +257,11 @@ export function canonicalBytes(migration: Migration): Buffer {
   //
   // Round 11: the previous shape built an array of Buffers and concatenated it, which read
   // `body.length` — a getter inherited from %TypedArray%.prototype, and therefore replaceable by
-  // the same caller code. Faking it collapsed the whole preimage to a single byte, so every
-  // migration would have shared it. Patching that one read would not have been enough, because
-  // Buffer.concat reads the same lengths internally. Strings have no such exposure: `length` is
-  // an own property, concatenation of primitives consults no prototype, and the byte length
-  // comes from the captured Buffer.byteLength rather than from a constructed Buffer.
+  // the same caller code. With it replaced, a two-byte statement was written with the prefix
+  // `len:1`, so the length prefixing this format relies on no longer held; Buffer.concat
+  // consulted the same lengths, so correcting that one read would not have been enough. Strings
+  // have no such exposure: `length` is an own property, concatenation of primitives consults no
+  // prototype, and the byte length comes from the captured Buffer.byteLength.
   let preimage = `${CHECKSUM_ALGORITHM}\nversion:${version}\nstatements:${count}\n`;
   for (let index = 0; index < count; index += 1) {
     const statement = statements[index] as string;
@@ -255,7 +270,8 @@ export function canonicalBytes(migration: Migration): Buffer {
   return bufferFrom(preimage, 'utf8');
 }
 
-export function checksumOf(migration: Migration): string {
+/** Module-private, for the same reason as canonicalBytes above. */
+function checksumOf(migration: Migration): string {
   return createHash('sha256').update(canonicalBytes(migration)).digest('hex');
 }
 
@@ -265,6 +281,18 @@ export function checksumOf(migration: Migration): string {
  * test fail instead of silently redefining what every existing database should contain.
  */
 export const V1_CHECKSUM = 'f2e2aa4ad993a7b4562db35e1e1196dd4843470440e36b942dc87843ef6782c8';
+
+/**
+ * V1's checksum as actually derived from V1, computed once at module load from the frozen
+ * constant and from no caller input at all.
+ *
+ * This exists so withdrawing the encoder does not also withdraw the protection the encoder was
+ * providing: without it, editing V1_CREATE would change the schema this runner creates while
+ * V1_CHECKSUM kept its old literal value, and every comparison would still agree with itself.
+ * A value cannot be handed a hostile object, so exporting it adds no obligation of the kind
+ * that was just retired.
+ */
+export const V1_DERIVED_CHECKSUM = checksumOf(V1);
 
 export type InitStatus = 'applied' | 'already_at';
 

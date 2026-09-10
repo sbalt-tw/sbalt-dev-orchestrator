@@ -10,10 +10,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
 import {
-  initialise, InitError, canonicalBytes, checksumOf,
-  CHECKSUM_ALGORITHM, V1, V1_CHECKSUM, V1_CREATE,
+  initialise, InitError,
+  V1, V1_CHECKSUM, V1_CREATE, V1_DERIVED_CHECKSUM,
 } from '../src/db/migrate.js';
-import type { Migration } from '../src/db/migrate.js';
 
 // Resolved here so the crash fixture can load the same driver from a bare child process.
 const BETTER_SQLITE3 = createRequire(import.meta.url).resolve('better-sqlite3');
@@ -52,11 +51,12 @@ function seed(path: string, statements: readonly string[]): void {
 const REGISTRY_ROW = "INSERT INTO schema_migrations VALUES (1, '" + V1_CHECKSUM + "', '2026-01-01T00:00:00.000Z')";
 
 describe('checksum identity', () => {
-  // The expected value is written here as a literal. It is not derived from V1, so editing
-  // V1's bytes fails this test instead of silently redefining the released identity.
+  // The literal is written here, not derived, so editing V1's bytes fails this test instead of
+  // silently redefining the released identity. V1_DERIVED_CHECKSUM is computed inside the module
+  // from the frozen V1, so the pair also catches V1 and its literal drifting apart.
   it('matches the frozen golden for version 1', () => {
-    expect(checksumOf(V1)).toBe('f2e2aa4ad993a7b4562db35e1e1196dd4843470440e36b942dc87843ef6782c8');
     expect(V1_CHECKSUM).toBe('f2e2aa4ad993a7b4562db35e1e1196dd4843470440e36b942dc87843ef6782c8');
+    expect(V1_DERIVED_CHECKSUM).toBe(V1_CHECKSUM);
   });
 
   it('pins the exact v1 statement text', () => {
@@ -70,21 +70,27 @@ describe('checksum identity', () => {
     );
   });
 
-  it('carries the algorithm identity and a length prefix inside the preimage', () => {
-    const preimage = canonicalBytes(V1).toString('utf8');
-    expect(preimage.startsWith(`${CHECKSUM_ALGORITHM}\n`)).toBe(true);
-    expect(preimage).toContain(`len:${Buffer.byteLength(V1_CREATE, 'utf8')}\n`);
+  // F21. Round 12. Comparing two declared constants would pass even if nothing this runner
+  // actually writes agreed with them. These read the value back out of a database produced by
+  // the real initialise, so the golden is checked against a persisted result.
+  it('persists the golden checksum into a database it actually creates', () => {
+    expect(initialise(dbPath)).toEqual({ status: 'applied', version: 1, checksum: V1_CHECKSUM });
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const row = db.prepare('SELECT version, checksum FROM schema_migrations').get() as
+        { version: number; checksum: string };
+      expect(row.version).toBe(1);
+      expect(row.checksum).toBe(V1_CHECKSUM);
+      expect(row.checksum).toBe(V1_DERIVED_CHECKSUM);
+      expect(db.prepare('SELECT sql FROM sqlite_master').pluck().get()).toBe(V1_CREATE);
+    } finally {
+      db.close();
+    }
   });
 
-  it('separates the sequences that the ";\\n" scheme made identical', () => {
-    const a = { version: 1, statements: ['SELECT 1 --', 'SELECT 2'] };
-    const b = { version: 1, statements: ['SELECT 1 --;\nSELECT 2'] };
-    expect(a.statements.join(';\n')).toBe(b.statements.join(';\n')); // the old collision
-    expect(checksumOf(a)).not.toBe(checksumOf(b));
-  });
-
-  it('separates migrations that differ only in version', () => {
-    expect(checksumOf({ version: 2, statements: V1.statements })).not.toBe(V1_CHECKSUM);
+  it('reports the same checksum when it reopens that database in a later run', () => {
+    initialise(dbPath);
+    expect(initialise(dbPath)).toEqual({ status: 'already_at', version: 1, checksum: V1_CHECKSUM });
   });
 });
 
@@ -876,252 +882,6 @@ describe('a failure to flush after the database is published', () => {
 
 // 4. An unpaired surrogate is refused rather than silently replaced, because UTF-8 encoding
 // would map it to U+FFFD and let two different declared migrations share one preimage.
-describe('checksum input domain', () => {
-  it('refuses an ill-formed statement instead of rewriting it', () => {
-    expectCode(() => checksumOf({ version: 1, statements: ['\uD800'] }), 'E_INTERNAL');
-    expectCode(() => canonicalBytes({ version: 1, statements: ['a\uDC00b'] }), 'E_INTERNAL');
-  });
-
-  it('accepts the legitimate replacement character, which is a real code point', () => {
-    const sum = checksumOf({ version: 1, statements: ['�'] });
-    expect(sum).toMatch(/^[0-9a-f]{64}$/);
-    // The pair that used to collide can no longer be compared: one side is now refused.
-    expect(sum).not.toBe(V1_CHECKSUM);
-  });
-
-  it('leaves the released v1 identity untouched', () => {
-    expect(checksumOf(V1)).toBe(V1_CHECKSUM);
-  });
-
-  // F17. Round 9. Validation and encoding read the caller's values separately, so an accessor
-  // could answer the checks with a legal value and the preimage with another. "Did it throw" is
-  // not a usable oracle here, and neither is a digest comparison against the ill-formed case:
-  // a lone surrogate and U+FFFD encode to the same bytes, so that shape cannot say WHICH value
-  // was encoded. These cases therefore make the late value one whose encoding differs, so the
-  // resulting digest names the value that actually reached the preimage.
-  describe('a value that changes between validation and encoding', () => {
-    const EARLY = "SELECT 'early'";
-    const LATE = "SELECT 'late'";
-
-    /** An array whose element 0 returns something else after its first read. */
-    const shifting = (first: string, rest: string): string[] => {
-      let reads = 0;
-      const a = [first];
-      Object.defineProperty(a, '0', {
-        enumerable: true,
-        configurable: true,
-        get: () => (reads++ === 0 ? first : rest),
-      });
-      return a;
-    };
-
-    it('encodes the statement it validated, not a later one', () => {
-      const shifted = checksumOf({ version: 1, statements: shifting(EARLY, LATE) });
-      expect(shifted).toBe(checksumOf({ version: 1, statements: [EARLY] }));
-      expect(shifted).not.toBe(checksumOf({ version: 1, statements: [LATE] }));
-    });
-
-    it('encodes the statement it validated when the array is a Proxy', () => {
-      let reads = 0;
-      const statements = new Proxy([EARLY], {
-        get: (target, prop, receiver) => (prop === '0'
-          ? (reads++ === 0 ? EARLY : LATE)
-          : Reflect.get(target, prop, receiver)),
-      });
-      expect(checksumOf({ version: 1, statements })).toBe(
-        checksumOf({ version: 1, statements: [EARLY] }),
-      );
-    });
-
-    it('encodes the version it validated, not a later one', () => {
-      let reads = 0;
-      const migration = { statements: [EARLY] } as { statements: string[]; version: number };
-      Object.defineProperty(migration, 'version', {
-        enumerable: true,
-        get: () => (reads++ < 3 ? 1 : 2),
-      });
-      expect(checksumOf(migration)).toBe(checksumOf({ version: 1, statements: [EARLY] }));
-      expect(checksumOf(migration)).not.toBe(checksumOf({ version: 2, statements: [EARLY] }));
-    });
-
-    // The security-relevant shape. The digest is ambiguous by construction, so the assertion is
-    // that the ill-formed value cannot be what was encoded: either the call is refused, or the
-    // validated value is what came out.
-    it('never lets an ill-formed statement reach the preimage after validation', () => {
-      const statements = shifting('x�', 'x\uD800');
-      let digest: string | undefined;
-      try {
-        digest = checksumOf({ version: 1, statements });
-      } catch (error) {
-        expect(error).toBeInstanceOf(InitError);
-        expect((error as InitError).code).toBe('E_INTERNAL');
-        return;
-      }
-      expect(digest).toBe(checksumOf({ version: 1, statements: ['x�'] }));
-    });
-
-    it('still refuses a statement that is ill-formed from the start', () => {
-      expectCode(() => checksumOf({ version: 1, statements: ['a\uD800'] }), 'E_INTERNAL');
-    });
-
-    // The capture must not quietly widen what `statements` may be. Anything iterable or
-    // array-like would otherwise be reinterpreted: a string became one statement per character,
-    // and a bare number encoded as zero statements.
-    it.each([
-      ['a string', "SELECT 'a'"],
-      ['a plain array-like object', { 0: "SELECT 'a'", length: 1 }],
-      ['a Set', new Set(["SELECT 'a'"])],
-      ['a generator object', (function* () { yield "SELECT 'a'"; })()],
-      ['a number', 3],
-      ['null', null],
-    ])('refuses %s in place of the statements array', (_label, statements) => {
-      expectCode(
-        () => canonicalBytes({ version: 1, statements } as unknown as Migration),
-        'E_INTERNAL',
-      );
-    });
-
-    // Symbol.iterator is caller-controlled, so a capture that goes through it does not capture
-    // what the array holds. Compared over canonical bytes, not a digest: the bytes name the
-    // statement that was encoded, where a digest only says two inputs agreed.
-    it('captures what the array holds, not what its iterator yields', () => {
-      const statements = [EARLY];
-      Object.defineProperty(statements, Symbol.iterator, {
-        configurable: true,
-        value: function* () { yield LATE; },
-      });
-      expect(canonicalBytes({ version: 1, statements })).toEqual(
-        canonicalBytes({ version: 1, statements: [EARLY] }),
-      );
-    });
-
-    it('encodes the validated statement, compared over canonical bytes', () => {
-      expect(canonicalBytes({ version: 1, statements: shifting(EARLY, LATE) })).toEqual(
-        canonicalBytes({ version: 1, statements: [EARLY] }),
-      );
-    });
-
-    // F19. Round 10. Reading a caller's value runs caller code, and that code can replace the
-    // built-ins the encoder uses next. `.push` is resolved before its argument is evaluated, so
-    // a getter that reassigned Array.prototype.push let the first push through and silently
-    // dropped the rest: ['A','B'] and ['C'] both emitted a bare "statements:1" header and became
-    // the same preimage. Varying returned values or Symbol.iterator does not reach this — the
-    // mutation has to be of the prototype production itself dispatches through.
-    describe('caller code that sabotages the built-ins the encoder uses', () => {
-      /** Restores whatever this test replaced, whether or not the assertion passed. */
-      const withRestored = <T>(restore: () => void, body: () => T): T => {
-        try {
-          return body();
-        } finally {
-          restore();
-        }
-      };
-
-      const sabotagingPush = (values: string[]): string[] => {
-        const a = values.slice();
-        Object.defineProperty(a, '0', {
-          enumerable: true,
-          configurable: true,
-          get() {
-            Array.prototype.push = function push(this: unknown[]) { return this.length; };
-            return values[0];
-          },
-        });
-        return a;
-      };
-
-      it('keeps distinct migrations distinct when a getter replaces Array.prototype.push', () => {
-        const realPush = Array.prototype.push;
-        const [ab, c] = withRestored(() => { Array.prototype.push = realPush; }, () => [
-          canonicalBytes({ version: 1, statements: sabotagingPush(['A', 'B']) }),
-          canonicalBytes({ version: 1, statements: sabotagingPush(['C']) }),
-        ]);
-        expect(ab).not.toEqual(c);
-        // Stronger than "not equal": sabotage must make no difference at all.
-        expect(ab).toEqual(canonicalBytes({ version: 1, statements: ['A', 'B'] }));
-        expect(c).toEqual(canonicalBytes({ version: 1, statements: ['C'] }));
-      });
-
-      // String iteration dispatches through String.prototype[Symbol.iterator], so replacing it
-      // could let an ill-formed statement pass validation while Buffer.from encodes the real
-      // content. Validation now walks the string by index instead.
-      // F20. Round 11. Capturing the method is not enough: `charCodeAt.call(...)` still looked
-      // `call` up on the function object, inherited from Function.prototype and equally
-      // replaceable. Faking it made every character report as 'A', so a lone surrogate passed
-      // validation and was encoded as U+FFFD — the collision this whole rule exists to prevent.
-      it('still refuses an ill-formed statement when Function.prototype.call is replaced', () => {
-        const realCall = Function.prototype.call;
-        const lying = function (this: unknown, thisArg: unknown, ...args: unknown[]) {
-          if (typeof thisArg === 'string') return 0x41;   // never a surrogate
-          return Reflect.apply(this as (...a: unknown[]) => unknown, thisArg, args);
-        };
-        const statements = ['a', 'b\uD800'];
-        Object.defineProperty(statements, '0', {
-          enumerable: true,
-          configurable: true,
-          get() {
-            Object.defineProperty(Function.prototype, 'call', {
-              configurable: true, writable: true, value: lying,
-            });
-            return 'a';
-          },
-        });
-        withRestored(
-          () => Object.defineProperty(Function.prototype, 'call', {
-            configurable: true, writable: true, value: realCall,
-          }),
-          () => expectCode(() => canonicalBytes({ version: 1, statements }), 'E_INTERNAL'),
-        );
-      });
-
-      // The same class one level further out: `length` on a Buffer is a getter inherited from
-      // %TypedArray%.prototype. Faking it made the old shape write the wrong `len:` prefix, so
-      // the length prefixing that guarantees injectivity no longer held. The preimage is now
-      // assembled as a primitive string, using the captured Buffer.byteLength.
-      it('encodes the same bytes when the TypedArray length getter is replaced', () => {
-        const proto = Object.getPrototypeOf(Uint8Array.prototype) as object;
-        const real = Object.getOwnPropertyDescriptor(proto, 'length')!;
-        const statements = ['AB'];
-        Object.defineProperty(statements, '0', {
-          enumerable: true,
-          configurable: true,
-          get() {
-            Object.defineProperty(proto, 'length', { configurable: true, get: () => 1 });
-            return 'AB';
-          },
-        });
-        // Restore before comparing: reading the result under a poisoned getter would measure
-        // Buffer.prototype.toString rather than what the encoder produced.
-        const sabotaged = withRestored(
-          () => Object.defineProperty(proto, 'length', real),
-          () => canonicalBytes({ version: 1, statements }),
-        );
-        expect(sabotaged).toEqual(canonicalBytes({ version: 1, statements: ['AB'] }));
-      });
-
-      it('still refuses an ill-formed statement when String iteration is replaced', () => {
-        const real = Object.getOwnPropertyDescriptor(String.prototype, Symbol.iterator)!;
-        const statements = ['a\uD800'];
-        Object.defineProperty(statements, '0', {
-          enumerable: true,
-          configurable: true,
-          get() {
-            Object.defineProperty(String.prototype, Symbol.iterator, {
-              configurable: true,
-              writable: true,
-              value: function* claimsHarmless() { yield 'x'; },
-            });
-            return 'a\uD800';
-          },
-        });
-        withRestored(
-          () => Object.defineProperty(String.prototype, Symbol.iterator, real),
-          () => expectCode(() => canonicalBytes({ version: 1, statements }), 'E_INTERNAL'),
-        );
-      });
-    });
-  });
-});
 
 // 5. The declared platform boundary is enforced before anything touches the target.
 describe('the supported platform boundary', () => {
@@ -1346,22 +1106,6 @@ describe('losing a publication race', () => {
   });
 });
 
-describe('the checksum version domain', () => {
-  it.each([
-    ['zero', 0],
-    ['negative zero', -0],
-    ['a negative version', -1],
-    ['a fractional version', 1.5],
-    ['a string that looks like a version', '1'],
-  ])('refuses %s', (_label, version) => {
-    expectCode(() => checksumOf({ version: version as number, statements: ['X'] }), 'E_INTERNAL');
-  });
-
-  it('leaves the released v1 identity untouched', () => {
-    expect(checksumOf(V1)).toBe(V1_CHECKSUM);
-    expect(V1_CHECKSUM).toBe('f2e2aa4ad993a7b4562db35e1e1196dd4843470440e36b942dc87843ef6782c8');
-  });
-});
 
 describe('the declared install boundary', () => {
   it('states the same platform and cpu in the manifest and the lockfile root', () => {
