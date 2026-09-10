@@ -1000,6 +1000,72 @@ describe('checksum input domain', () => {
         canonicalBytes({ version: 1, statements: [EARLY] }),
       );
     });
+
+    // F19. Round 10. Reading a caller's value runs caller code, and that code can replace the
+    // built-ins the encoder uses next. `.push` is resolved before its argument is evaluated, so
+    // a getter that reassigned Array.prototype.push let the first push through and silently
+    // dropped the rest: ['A','B'] and ['C'] both emitted a bare "statements:1" header and became
+    // the same preimage. Varying returned values or Symbol.iterator does not reach this — the
+    // mutation has to be of the prototype production itself dispatches through.
+    describe('caller code that sabotages the built-ins the encoder uses', () => {
+      /** Restores whatever this test replaced, whether or not the assertion passed. */
+      const withRestored = <T>(restore: () => void, body: () => T): T => {
+        try {
+          return body();
+        } finally {
+          restore();
+        }
+      };
+
+      const sabotagingPush = (values: string[]): string[] => {
+        const a = values.slice();
+        Object.defineProperty(a, '0', {
+          enumerable: true,
+          configurable: true,
+          get() {
+            Array.prototype.push = function push(this: unknown[]) { return this.length; };
+            return values[0];
+          },
+        });
+        return a;
+      };
+
+      it('keeps distinct migrations distinct when a getter replaces Array.prototype.push', () => {
+        const realPush = Array.prototype.push;
+        const [ab, c] = withRestored(() => { Array.prototype.push = realPush; }, () => [
+          canonicalBytes({ version: 1, statements: sabotagingPush(['A', 'B']) }),
+          canonicalBytes({ version: 1, statements: sabotagingPush(['C']) }),
+        ]);
+        expect(ab).not.toEqual(c);
+        // Stronger than "not equal": sabotage must make no difference at all.
+        expect(ab).toEqual(canonicalBytes({ version: 1, statements: ['A', 'B'] }));
+        expect(c).toEqual(canonicalBytes({ version: 1, statements: ['C'] }));
+      });
+
+      // String iteration dispatches through String.prototype[Symbol.iterator], so replacing it
+      // could let an ill-formed statement pass validation while Buffer.from encodes the real
+      // content. Validation now walks the string by index instead.
+      it('still refuses an ill-formed statement when String iteration is replaced', () => {
+        const real = Object.getOwnPropertyDescriptor(String.prototype, Symbol.iterator)!;
+        const statements = ['a\uD800'];
+        Object.defineProperty(statements, '0', {
+          enumerable: true,
+          configurable: true,
+          get() {
+            Object.defineProperty(String.prototype, Symbol.iterator, {
+              configurable: true,
+              writable: true,
+              value: function* claimsHarmless() { yield 'x'; },
+            });
+            return 'a\uD800';
+          },
+        });
+        withRestored(
+          () => Object.defineProperty(String.prototype, Symbol.iterator, real),
+          () => expectCode(() => canonicalBytes({ version: 1, statements }), 'E_INTERNAL'),
+        );
+      });
+    });
   });
 });
 

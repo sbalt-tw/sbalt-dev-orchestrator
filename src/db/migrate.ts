@@ -136,14 +136,42 @@ export const V1: Migration = Object.freeze({
 export const CHECKSUM_ALGORITHM = 'dev-orch/migration-checksum/v2';
 
 /**
- * True when every code point is a real character. Iterating a string yields code points, so
- * a correctly paired surrogate appears once above U+FFFF, while an unpaired one surfaces in
- * the surrogate range and is rejected.
+ * Intrinsics captured at module load, before any caller code can run.
+ *
+ * Round 10: reading a caller's value runs caller code, and that code can replace the very
+ * built-ins the encoder uses next. An index getter that reassigned `Array.prototype.push` made
+ * every later push a no-op — `.push` is resolved before its argument is evaluated, so the first
+ * push still worked and the rest silently vanished, collapsing ['A','B'] and ['C'] to identical
+ * bytes. Ordering alone cannot fix that: the caller's code always runs before the encoding.
+ * Holding the original function objects does, because a later reassignment of the prototype
+ * property cannot reach a reference captured here.
+ */
+const isArray = Array.isArray;
+const push = Array.prototype.push;
+const charCodeAt = String.prototype.charCodeAt;
+const bufferFrom = Buffer.from;
+const bufferConcat = Buffer.concat;
+const isSafeInteger = Number.isSafeInteger;
+
+/**
+ * True when every code point is a real character: a high surrogate must be followed by a low
+ * one, and a low surrogate may not stand alone.
+ *
+ * Indices and captured `charCodeAt` are used rather than `for..of`, because string iteration
+ * dispatches through `String.prototype[Symbol.iterator]` — replaceable by the same caller code,
+ * which would let a string pass validation while `Buffer.from` later encodes different content.
  */
 function isWellFormed(value: string): boolean {
-  for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
-    if (code >= 0xd800 && code <= 0xdfff) return false;
+  const length = value.length;
+  for (let index = 0; index < length; index += 1) {
+    const code = charCodeAt.call(value, index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const low = charCodeAt.call(value, index + 1);
+      if (!(low >= 0xdc00 && low <= 0xdfff)) return false;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
   }
   return true;
 }
@@ -175,36 +203,47 @@ export function canonicalBytes(migration: Migration): Buffer {
   // Array.from also silently widens the domain this contract declares — a string became one
   // statement per character, a plain array-like and a bare number were accepted outright.
   // Reading `length` once and then each index once takes exactly the values the array holds.
+  //
+  // Round 10: every built-in used from here on is one of the references captured at module
+  // load, because reading the caller's values above runs the caller's code.
   const version: unknown = migration.version;
   const source: unknown = migration.statements;
-  if (!Array.isArray(source)) throw new InitError('E_INTERNAL');
+  if (!isArray(source)) throw new InitError('E_INTERNAL');
   const count: unknown = source.length;
-  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) {
+  if (typeof count !== 'number' || !isSafeInteger(count) || count < 0) {
     throw new InitError('E_INTERNAL');
   }
   const statements: unknown[] = [];
   for (let index = 0; index < count; index += 1) {
-    statements.push((source as readonly unknown[])[index]);
+    push.call(statements, (source as readonly unknown[])[index]);
   }
+  // The capture is only trustworthy if it holds as many elements as the array said it had. A
+  // sabotaged push would leave it short, and that must be an error rather than a shorter, still
+  // well-formed preimage that a different migration could also produce.
+  if (statements.length !== count) throw new InitError('E_INTERNAL');
 
-  if (typeof version !== 'number' || !Number.isSafeInteger(version) || version < 1) {
+  if (typeof version !== 'number' || !isSafeInteger(version) || version < 1) {
     throw new InitError('E_INTERNAL');
   }
-  for (const statement of statements) {
+  for (let index = 0; index < count; index += 1) {
+    const statement = statements[index];
     if (typeof statement !== 'string' || !isWellFormed(statement)) {
       throw new InitError('E_INTERNAL');
     }
   }
   const parts = [
-    Buffer.from(`${CHECKSUM_ALGORITHM}\n`, 'utf8'),
-    Buffer.from(`version:${version}\n`, 'utf8'),
-    Buffer.from(`statements:${statements.length}\n`, 'utf8'),
+    bufferFrom(`${CHECKSUM_ALGORITHM}\n`, 'utf8'),
+    bufferFrom(`version:${version}\n`, 'utf8'),
+    bufferFrom(`statements:${count}\n`, 'utf8'),
   ];
-  for (const statement of statements as readonly string[]) {
-    const body = Buffer.from(statement, 'utf8');
-    parts.push(Buffer.from(`len:${body.length}\n`, 'utf8'), body, Buffer.from('\n', 'utf8'));
+  for (let index = 0; index < count; index += 1) {
+    const body = bufferFrom(statements[index] as string, 'utf8');
+    push.call(parts, bufferFrom(`len:${body.length}\n`, 'utf8'), body, bufferFrom('\n', 'utf8'));
   }
-  return Buffer.concat(parts);
+  // Three parts per statement plus the three-line header: if any of them failed to land, the
+  // preimage is not the one this function claims to have built.
+  if (parts.length !== 3 + count * 3) throw new InitError('E_INTERNAL');
+  return bufferConcat(parts);
 }
 
 export function checksumOf(migration: Migration): string {
