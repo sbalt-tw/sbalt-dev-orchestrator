@@ -3,7 +3,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync,
-  writeFileSync,
+  symlinkSync, writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -145,16 +145,23 @@ describe('an ambiguous --db', () => {
 //
 // The signal is a real one from the operating system, sent to a real child running the compiled
 // CLI — not a handler called directly and not an emitted event. It is not fired on a timer: the
-// test polls for the *target* name, which appears exactly when linkSync returns, so the child is
-// inside the window by construction. Measured on this machine the window is 7-9 ms and the signal
-// is sent within about 10 microseconds of the name appearing.
+// test polls for the *target* name, which appears exactly when linkSync returns.
 //
-// The oracle is the resulting state, not the exit disposition. db:init is one synchronous block
-// and Node dispatches signals only between event-loop turns, so with the fix in place the command
-// normally completes before the signal is ever delivered to JavaScript and the child exits 0.
-// Asserting death-by-signal would therefore fail against a working fix. What is asserted is what
-// the defect was about: nothing of this run's own is left behind, and the promised repeat run
-// works. Against this same window the unfixed CLI stranded a temporary in 10 of 10 runs.
+// Honest about what that trigger proves. The target name persists after cleanup, so its existence
+// alone does not establish that the child is still between publication and cleanup — a late poll
+// could fire after cleanup and the kill would still succeed. What makes it land inside the window
+// is timing that was measured rather than assumed: 7-9 ms from the name appearing to the child
+// exiting, with the signal sent about 10 microseconds after it appears. The discriminating
+// evidence is the mutation, not the trigger: against this same setup the CLI without the
+// listeners stranded a temporary in 10 of 10 runs, and removing the reporting and re-raise while
+// keeping the listeners turns these cases red on the exit signal.
+//
+// Scope. These cases cover an interrupt that was *observed*: the disposition, the absence of any
+// success line, the cleanup, and the reopen. They do not cover — and cannot close — the accepted
+// limitation that a signal delivered before the decision may have its handler dispatched after
+// it, in which case the completed result is reported and the disposition is not guaranteed. That
+// residual is documented in the README and in the CLI's own comment, and is recorded as
+// OPEN/ACCEPTED rather than fixed.
 describe('a real interrupt during publication', () => {
   /** `hit` records that the signal was accepted by the kernel while the child was inside the
    *  window; the disposition and the output are asserted separately. */
@@ -166,7 +173,10 @@ describe('a real interrupt during publication', () => {
     stderr: string;
   }
 
-  function interruptDuringPublication(target: string, signal: 'SIGINT' | 'SIGTERM'): Promise<Attempt> {
+  function interruptDuringPublication(
+    target: string,
+    signal: 'SIGINT' | 'SIGTERM' | 'SIGHUP',
+  ): Promise<Attempt> {
     return new Promise((resolve) => {
       const child = spawn(process.execPath, [CLI, 'db:init', '--db', target], {
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -202,7 +212,9 @@ describe('a real interrupt during publication', () => {
     });
   }
 
-  it.each(['SIGINT', 'SIGTERM'] as const)(
+  // SIGHUP is catchable but terminates by default, so before Round 15 it stranded the
+  // temporary exactly as the other two did.
+  it.each(['SIGINT', 'SIGTERM', 'SIGHUP'] as const)(
     'reports %s, keeps the published database and cleans up its own temporary',
     async (signal) => {
       rmSync(dir, { recursive: true, force: true });
@@ -250,5 +262,56 @@ describe('a real interrupt during publication', () => {
     expect(first).toContain('result=applied');
     expect(first).toContain(`checksum=${V1_CHECKSUM}`);
     expect(readdirSync(dir)).toEqual(['orchestrator.sqlite']);
+  });
+});
+
+// F23. Round 15. The module used to call main() at evaluation time, so importing the compiled CLI
+// ran the command: it read the host's argv, printed a reason code and set the host's exit code.
+// The dangerous shape is a host whose argv happens to be a valid db:init, which would have created
+// a database in the importer's process. The probe runs in its own child so the host argv can be
+// controlled, and it reports what it observed rather than asserting inside the child.
+describe('importing the compiled CLI', () => {
+  it('does nothing: no command, no listeners, no output, no exit code, no database', () => {
+    const target = join(dir, 'must-not-exist.sqlite');
+    const probe = [
+      "import { existsSync } from 'node:fs';",
+      `const m = await import(${JSON.stringify(CLI)});`,
+      'await new Promise((r) => setTimeout(r, 50));',
+      'process.stdout.write(JSON.stringify({',
+      "  listeners: process.listenerCount('SIGINT') + process.listenerCount('SIGTERM')",
+      "    + process.listenerCount('SIGHUP'),",
+      '  exitCode: process.exitCode ?? null,',
+      `  created: existsSync(${JSON.stringify(target)}),`,
+      '  exports: Object.keys(m).sort(),',
+      '}));',
+    ].join('\n');
+
+    // The host argv is a *valid* db:init command for a path that must not come into existence.
+    const raw = execFileSync(
+      process.execPath,
+      ['--input-type=module', '-e', probe, 'db:init', '--db', target],
+      { encoding: 'utf8' },
+    );
+    const seen = JSON.parse(raw.slice(raw.indexOf('{'))) as {
+      listeners: number; exitCode: number | null; created: boolean; exports: string[];
+    };
+
+    expect(seen.listeners).toBe(0);
+    expect(seen.exitCode).toBeNull();
+    expect(seen.created).toBe(false);
+    expect(existsSync(target)).toBe(false);
+    expect(readdirSync(dir)).toEqual([]);
+    // The module is still importable and still exports run; only the side effects are gone.
+    expect(seen.exports).toEqual(['run']);
+  });
+
+  it('still runs when started as a program through a symlink, as the installed bin is', () => {
+    const link = join(dir, 'dev-orch');
+    symlinkSync(CLI, link);
+    const target = join(dir, 'via-symlink.sqlite');
+    const first = execFileSync(process.execPath, [link, 'db:init', '--db', target], { encoding: 'utf8' });
+    expect(first).toContain('result=applied');
+    const second = execFileSync(process.execPath, [link, 'db:init', '--db', target], { encoding: 'utf8' });
+    expect(second).toContain('result=already_at');
   });
 });

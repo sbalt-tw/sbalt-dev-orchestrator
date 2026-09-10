@@ -5,6 +5,8 @@
 // the environment or a built-in default. Missing parent directories are not created. The
 // command accepts no SQL, no migration path, no registry and no fault-injection parameter.
 
+import { realpathSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { InitError, REASON_TEXT, initialise } from '../db/migrate.js';
 import type { ReasonCode } from '../db/migrate.js';
 
@@ -48,7 +50,13 @@ function parseDbFlag(args: readonly string[]): string {
   return value;
 }
 
-const INTERRUPT_SIGNALS = ['SIGINT', 'SIGTERM'] as const;
+// SIGHUP is here for the same reason as the other two, not as an extra nicety: it is catchable
+// but terminates by default, so before this it took the operating system's default action and
+// stranded the temporary exactly as SIGINT and SIGTERM did — measured at 5 of 5 runs, with every
+// following run then refused as E_DB_TARGET_ALIASED. Closing a terminal or restarting a service
+// sends it. The accepted limitations name only the uncatchable SIGKILL, so leaving SIGHUP out
+// would have kept that boundary quietly wider than it is written.
+const INTERRUPT_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
 type InterruptSignal = (typeof INTERRUPT_SIGNALS)[number];
 
 type Executed =
@@ -112,12 +120,27 @@ export function run(argv: readonly string[]): number {
  *   4. only then report, and only then remove the listeners.
  *
  * Verified on the Node this package supports (>=22): with this ordering a signal delivered during
- * the synchronous section is observed, whereas the Round 13 ordering lost it.
+ * the synchronous section is normally observed, whereas the Round 13 ordering lost it.
  *
- * An interrupted run therefore prints no applied/already_at line, and the same signal is re-raised
- * after the listeners are removed, so the child's exit carries the real disposition rather than an
- * ordinary status. A failure that happened before the interrupt still prints its own reason code:
- * the interruption never hides a cleanup failure or overwrites a primary error.
+ * WHAT THIS DOES NOT ACHIEVE, accepted rather than fixed. It does not guarantee that every signal
+ * the operating system has delivered is reflected in the output or in the exit. A signal can be
+ * delivered *before* the decision and still have its JavaScript handler dispatched *after* it —
+ * which is not the same as "the signal arrived after the work finished", and is the case that
+ * remains open. When that happens the command reports the result it genuinely completed and exits
+ * normally, and the signal disposition is not guaranteed to match what was sent. More timers or
+ * yields would only move the sampling point rather than remove it; closing it needs a lifecycle
+ * with an explicit completion boundary, which this tool has deliberately not adopted. Recorded as
+ * OPEN/ACCEPTED, not as fixed.
+ *
+ * What is *not* accepted, and is enforced: an interrupt that was observed is never ignored; no
+ * success is reported for an operation that did not complete; a primary error or a cleanup failure
+ * is never hidden behind a success; and none of SIGINT, SIGTERM or SIGHUP may strand the temporary
+ * and wedge the path — covered by the listeners above and by real-signal regressions.
+ *
+ * An observed interrupt therefore prints no applied/already_at line, and the same signal is
+ * re-raised after the listeners are removed, so the exit carries the disposition that was sent.
+ * A failure that happened before the interrupt still prints its own reason code: the interruption
+ * never hides a cleanup failure or overwrites a primary error.
  *
  * A database that was already published stays published. An interrupt is not a rollback, and
  * nothing here removes a target to make the exit look tidier.
@@ -160,4 +183,27 @@ async function main(): Promise<void> {
   process.exitCode = code;
 }
 
-void main();
+/**
+ * True only when this module is the program Node was told to run.
+ *
+ * Round 15: `main()` used to be invoked unconditionally at module evaluation, so importing the
+ * compiled CLI *ran the command* — it read the host's argv, printed `E_DB_ARG_MISSING`, and set
+ * the host's exit code. With a valid `--db` in the host's argv it would have created a database.
+ * The claim that importing installed nothing was simply false.
+ *
+ * argv[1] is resolved through realpath before comparing, because the installed `dev-orch` is a
+ * symlink in node_modules/.bin: comparing the link path against this module's real URL would
+ * make the real bin stop running. A missing or unresolvable argv[1] means this was not started
+ * as a program, so the command does not run.
+ */
+function startedAsProgram(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (startedAsProgram()) void main();
