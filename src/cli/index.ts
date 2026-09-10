@@ -51,31 +51,30 @@ function parseDbFlag(args: readonly string[]): string {
 const INTERRUPT_SIGNALS = ['SIGINT', 'SIGTERM'] as const;
 type InterruptSignal = (typeof INTERRUPT_SIGNALS)[number];
 
-export function run(
-  argv: readonly string[],
-  interruptedBy: () => InterruptSignal | null = () => null,
-): number {
+type Executed =
+  | { readonly ok: true; readonly outcome: ReturnType<typeof initialise> }
+  | { readonly ok: false; readonly code: ReasonCode };
+
+/** Does the work and decides the outcome. Writes nothing: reporting is a separate step. */
+function execute(argv: readonly string[]): Executed {
   const [command, ...rest] = argv;
-  if (command !== 'db:init') return fail('E_DB_ARG_MISSING');
+  if (command !== 'db:init') return { ok: false, code: 'E_DB_ARG_MISSING' };
   try {
-    const outcome = initialise(parseDbFlag(rest));
-    // initialise is synchronous, so a signal that arrived while it ran is delivered only now,
-    // after its own cleanup has finished. Reporting success here would claim a completed run
-    // that the operator interrupted, so the interruption is reported instead.
-    const signal = interruptedBy();
-    if (signal !== null) {
-      process.stderr.write(`db:init interrupted=${signal}\n`);
-      return 1;
-    }
-    process.stdout.write(
-      `db:init result=${outcome.status} version=${outcome.version} checksum=${outcome.checksum}\n`,
-    );
-    return 0;
+    return { ok: true, outcome: initialise(parseDbFlag(rest)) };
   } catch (error) {
-    // A failure keeps its own reason code even if a signal also arrived. The publication state
-    // it describes is what happened; the interruption is carried by the exit disposition below.
-    return fail(error instanceof InitError ? error.code : 'E_INTERNAL');
+    return { ok: false, code: error instanceof InitError ? error.code : 'E_INTERNAL' };
   }
+}
+
+function report(result: Executed): number {
+  if (!result.ok) return fail(result.code);
+  const { status, version, checksum } = result.outcome;
+  process.stdout.write(`db:init result=${status} version=${version} checksum=${checksum}\n`);
+  return 0;
+}
+
+export function run(argv: readonly string[]): number {
+  return report(execute(argv));
 }
 
 /**
@@ -97,23 +96,37 @@ export function run(
  * stays exactly where it was, on the temporary name this run created and holds. A cleanup
  * failure is still reported as E_TEMPORARY_NOT_REMOVED rather than hidden by the interruption.
  *
- * If the signal is dispatched before the command finishes it is not swallowed: the listeners are
- * removed and the same signal is re-raised, so the process exits with the disposition the
- * operator sent rather than lingering or reporting an ordinary status.
+ * Round 14 corrected the second half. Keeping the listeners only for the duration of the
+ * synchronous work preserved the cleanup but *discarded the signal*: libuv reads its signal pipe
+ * in the loop's poll phase, so a signal that arrived during db:init cannot reach JavaScript until
+ * control returns to the loop. Removing the listeners the instant the work returned meant the
+ * handler never ran, `interrupted` stayed null, and the command printed an ordinary success for a
+ * run the operator had interrupted. So the listeners now stay installed across a deliberate pass
+ * through the loop, and nothing is reported until that pass is done:
  *
- * Measured, so this says no more than it does: db:init is one synchronous block, and Node
- * dispatches a signal to JavaScript only between event-loop turns. A signal sent during a typical
- * run is therefore usually never dispatched at all — the command completes first, exits 0, and
- * there is nothing left to interrupt. What the listener changes is the part that mattered: the
- * operating system no longer terminates the process mid-run, so the cleanup in initialise's
- * `finally` always executes. Against this same window, ten of ten runs stranded a temporary and
- * wedged the next invocation without the listener, and ten of ten were clean with it.
+ *   1. do the work synchronously, writing nothing;
+ *   2. yield through a timer, which forces a full iteration — timers, then poll, where a pending
+ *      signal is read and its handler queued;
+ *   3. yield again through an immediate, so a handler queued during that iteration has run
+ *      before anything is decided;
+ *   4. only then report, and only then remove the listeners.
+ *
+ * Verified on the Node this package supports (>=22): with this ordering a signal delivered during
+ * the synchronous section is observed, whereas the Round 13 ordering lost it.
+ *
+ * An interrupted run therefore prints no applied/already_at line, and the same signal is re-raised
+ * after the listeners are removed, so the child's exit carries the real disposition rather than an
+ * ordinary status. A failure that happened before the interrupt still prints its own reason code:
+ * the interruption never hides a cleanup failure or overwrites a primary error.
+ *
+ * A database that was already published stays published. An interrupt is not a rollback, and
+ * nothing here removes a target to make the exit look tidier.
  *
  * This is deliberately not a recovery feature: nothing scans for or deletes leftovers from an
  * earlier run, and nothing is promised for terminations this cannot observe — SIGKILL and power
  * loss remain exactly as accepted before.
  */
-function main(): void {
+async function main(): Promise<void> {
   let interrupted: InterruptSignal | null = null;
   const installed = INTERRUPT_SIGNALS.map((signal) => {
     // The first signal wins; a repeated Ctrl-C changes nothing and starts no second teardown.
@@ -123,19 +136,28 @@ function main(): void {
     process.on(signal, handler);
     return { signal, handler };
   });
-
-  let code: number;
-  try {
-    code = run(process.argv.slice(2), () => interrupted);
-  } finally {
+  const uninstall = (): void => {
     for (const { signal, handler } of installed) process.removeListener(signal, handler);
-  }
+  };
+
+  const result = execute(process.argv.slice(2));
+
+  // Give a signal that arrived during the synchronous work above its chance to be dispatched.
+  await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+  await new Promise<void>((resolve) => { setImmediate(resolve); });
 
   if (interrupted !== null) {
+    // A primary failure keeps its own reason code; the interruption is reported alongside it.
+    if (!result.ok) fail(result.code);
+    process.stderr.write(`db:init interrupted=${interrupted}\n`);
+    uninstall();
     process.kill(process.pid, interrupted);
     return;
   }
+
+  const code = report(result);
+  uninstall();
   process.exitCode = code;
 }
 
-main();
+void main();

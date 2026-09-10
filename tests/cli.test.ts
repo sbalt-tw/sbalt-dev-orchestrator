@@ -156,21 +156,29 @@ describe('an ambiguous --db', () => {
 // the defect was about: nothing of this run's own is left behind, and the promised repeat run
 // works. Against this same window the unfixed CLI stranded a temporary in 10 of 10 runs.
 describe('a real interrupt during publication', () => {
-  /** `hit` records that the signal was accepted by the kernel while the child was inside
-   *  the window — not that the child died from it, which a working fix prevents. */
-  interface Attempt { hit: boolean; signal: string | null; code: number | null; stderr: string }
+  /** `hit` records that the signal was accepted by the kernel while the child was inside the
+   *  window; the disposition and the output are asserted separately. */
+  interface Attempt {
+    hit: boolean;
+    code: number | null;
+    signal: string | null;
+    stdout: string;
+    stderr: string;
+  }
 
   function interruptDuringPublication(target: string, signal: 'SIGINT' | 'SIGTERM'): Promise<Attempt> {
     return new Promise((resolve) => {
-      const child = spawn(process.execPath, [CLI, 'db:init', '--db', target], { stdio: 'pipe' });
+      const child = spawn(process.execPath, [CLI, 'db:init', '--db', target], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
       let stderr = '';
+      child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
       child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
 
-      // The target name appears exactly when linkSync returns, so its existence is the signal
-      // that the child is between publication and cleanup. This polls rather than using
-      // fs.watch: on macOS that is FSEvents-backed and reports tens of milliseconds late, by
-      // which time the child has usually finished. setImmediate re-arms on every event-loop
-      // turn, which is fast enough to land inside the directory-fsync the window is made of.
+      // The target name appears exactly when linkSync returns, so its existence means the child
+      // is between publication and cleanup. Polling rather than fs.watch: on macOS that is
+      // FSEvents-backed and reports tens of milliseconds late, long after this window closes.
       let fired = false;
       let delivered = false;
       const poll = (): void => {
@@ -189,13 +197,13 @@ describe('a real interrupt during publication', () => {
 
       child.on('close', (code, sig) => {
         fired = true;
-        resolve({ hit: delivered, signal: sig, code, stderr });
+        resolve({ hit: delivered, code, signal: sig, stdout, stderr });
       });
     });
   }
 
   it.each(['SIGINT', 'SIGTERM'] as const)(
-    'cleans up its own temporary and stays reopenable after %s',
+    'reports %s, keeps the published database and cleans up its own temporary',
     async (signal) => {
       rmSync(dir, { recursive: true, force: true });
       mkdirSync(dir, { recursive: true });
@@ -203,11 +211,21 @@ describe('a real interrupt during publication', () => {
       const attempt = await interruptDuringPublication(target, signal);
 
       // The window was genuinely entered: the target existed, so linkSync had returned, and the
-      // signal was accepted by the kernel rather than failing with ESRCH on a dead process.
+      // kernel accepted the signal rather than failing with ESRCH on a dead process.
       expect(attempt.hit, `${signal} was never delivered inside the publication window`).toBe(true);
 
-      // Its own temporary name is gone, and the published target has exactly one name.
+      // The interrupt is visible in the disposition. Read from the child's own exit fields, not
+      // from a shell's 130/143 translation.
+      expect(attempt.signal).toBe(signal);
+      expect(attempt.code).toBeNull();
+
+      // An interrupted run does not claim an ordinary success, and says what happened.
+      expect(attempt.stdout).toBe('');
+      expect(attempt.stderr).toBe(`db:init interrupted=${signal}\n`);
+
+      // Its own temporary is gone. The published database is kept: an interrupt is not a rollback.
       expect(readdirSync(dir).filter((n) => n.includes('.dev-orch-init-'))).toEqual([]);
+      expect(existsSync(target)).toBe(true);
       expect(lstatSync(target).nlink).toBe(1);
 
       // The promised repeat run works, and the database really holds v1.
@@ -225,4 +243,12 @@ describe('a real interrupt during publication', () => {
     },
     60_000,
   );
+
+  it('still reports an ordinary success when no signal is sent', () => {
+    const target = join(dir, 'orchestrator.sqlite');
+    const first = execFileSync(process.execPath, [CLI, 'db:init', '--db', target], { encoding: 'utf8' });
+    expect(first).toContain('result=applied');
+    expect(first).toContain(`checksum=${V1_CHECKSUM}`);
+    expect(readdirSync(dir)).toEqual(['orchestrator.sqlite']);
+  });
 });
