@@ -1,0 +1,169 @@
+name: ci
+
+# Mechanical checks only. A green run shows what executed; it is not evidence that the
+# architecture or the semantics were approved.
+#
+# This workflow carries no file-count, diff-size or path policy. An earlier revision did,
+# which would have made one pull request's review limits a permanent rule for every later
+# pull request in the repository. Those limits belong to the review, not to the repository.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prove which commit this run executed
+        if: github.event_name == 'pull_request'
+        env:
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          actual=$(git rev-parse HEAD)
+          printf 'checked out head : %s\n' "$actual"
+          printf 'event head       : %s\n' "$EVENT_HEAD"
+          [ "$actual" = "$EVENT_HEAD" ] || { echo "::error::checkout is not the reviewed head"; exit 1; }
+          # The head assertion above is the identity check. The base and merge-base are
+          # recorded for the reviewer; they are deliberately NOT required to be equal. An
+          # earlier revision did require it, which silently imposed a repository-wide
+          # "branch must be rebased" policy on every future pull request.
+          git fetch --no-tags origin "$EVENT_BASE"
+          printf 'declared base    : %s\n' "$EVENT_BASE"
+          printf 'merge-base       : %s\n' "$(git merge-base "$EVENT_BASE" HEAD)"
+          printf 'head tree        : %s\n' "$(git rev-parse 'HEAD^{tree}')"
+
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - name: Clean install
+        run: npm ci
+      - name: Prove which driver and which SQLite this run used
+        run: |
+          set -euo pipefail
+          installed=$(node -p "require('better-sqlite3/package.json').version")
+          sqlite=$(node -e "const D=require('better-sqlite3');const d=new D(':memory:');console.log(d.prepare('select sqlite_version() v').get().v);d.close()")
+          printf 'better-sqlite3   : %s\n' "$installed"
+          printf 'bundled sqlite   : %s\n' "$sqlite"
+          [ "$installed" = "13.0.3" ] || { echo "::error::better-sqlite3 is not the pinned 13.0.3"; exit 1; }
+          [ "$sqlite" = "3.53.4" ] || { echo "::error::bundled SQLite is not 3.53.4"; exit 1; }
+          # F5. The project floor must match what the locked dependency actually declares.
+          declared=$(node -p "require('./package.json').engines.node")
+          required=$(node -p "require('better-sqlite3/package.json').engines.node")
+          # The lockfile root carries its own copy of this metadata and used to disagree, so
+          # it is compared too rather than assumed to follow package.json.
+          locked=$(node -p "require('./package-lock.json').packages[''].engines.node")
+          printf 'engines.node     : project %s / lockfile %s / dependency %s\n' "$declared" "$locked" "$required"
+          [ "$declared" = "$required" ] || { echo "::error::engines.node does not match the pinned driver"; exit 1; }
+          [ "$locked" = "$declared" ] || { echo "::error::package-lock.json root engines.node is stale"; exit 1; }
+          os_declared=$(node -p "JSON.stringify(require('./package.json').os)")
+          os_locked=$(node -p "JSON.stringify(require('./package-lock.json').packages[''].os)")
+          printf 'os               : project %s / lockfile %s\n' "$os_declared" "$os_locked"
+          [ "$os_declared" = "$os_locked" ] || { echo "::error::package-lock.json root os is stale"; exit 1; }
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      # Tests run before any build, from a clean checkout, so a green suite proves the
+      # harness compiles what it needs for itself and never reuses a leftover dist/.
+      - name: No build output exists yet
+        run: |
+          set -euo pipefail
+          [ ! -e dist ] || { echo "::error::dist/ exists before the test step"; exit 1; }
+          echo "dist/ absent"
+      - name: Tests
+        run: npm test
+      - name: The test run cleaned up its own build directory
+        run: |
+          set -euo pipefail
+          left=$(find node_modules -maxdepth 1 -name '.a1-build-*' | wc -l | tr -d ' ')
+          printf 'leftover per-run build directories: %s\n' "$left"
+          [ "$left" = "0" ] || { echo "::error::a temporary build directory was left behind"; exit 1; }
+      - name: Build
+        run: npm run build
+      - name: Compiled CLI smoke
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/smoke"
+          mkdir -p "$work"
+          db="$work/orchestrator.sqlite"
+
+          # The executable a consumer resolves is the one `bin` declares, so this step runs that
+          # rather than a path repeated here. Round 18: repeating it is how the suite and this
+          # workflow both missed a `dev-orch` declaration pointing at the inert module.
+          bin=$(node -p "require('./package.json').bin['dev-orch']")
+          printf 'declared bin: %s\n' "$bin"
+          [ -x "$bin" ] || [ -f "$bin" ] \
+            || { echo "::error::the build produced no $bin"; exit 1; }
+
+          first=$(node "$bin" db:init --db "$db")
+          second=$(node "$bin" db:init --db "$db")
+          printf '%s\n%s\n' "$first" "$second"
+          case "$first"  in db:init\ result=applied\ version=1\ checksum=*) ;;    *) exit 1 ;; esac
+          case "$second" in db:init\ result=already_at\ version=1\ checksum=*) ;; *) exit 1 ;; esac
+
+          before=$(sha256sum "$db" | cut -d' ' -f1)
+          node "$bin" db:init --db "$db" >/dev/null
+          [ "$(sha256sum "$db" | cut -d' ' -f1)" = "$before" ] \
+            || { echo "::error::recognizing an existing database modified it"; exit 1; }
+
+          # The bootstrap split, checked here and not only in the suite. bin.js runs the
+          # command; index.js is a module and must do nothing when loaded, even when argv names
+          # it and carries a valid db:init. This step used to invoke index.js, and when the split
+          # landed it produced no output at all -- exactly the disagreement between CI and the
+          # local harness that this assertion now stops from passing silently in either direction.
+          inert="$work/inert.sqlite"
+          out=$(node --input-type=module \
+            -e "await import(process.argv[1]); process.stdout.write('loaded')" \
+            "$PWD/dist/cli/index.js" db:init --db "$inert")
+          [ "$out" = "loaded" ] \
+            || { echo "::error::importing dist/cli/index.js produced output: $out"; exit 1; }
+          [ ! -e "$inert" ] \
+            || { echo "::error::importing dist/cli/index.js created a database"; exit 1; }
+
+          if node "$bin" db:init --db relative.sqlite; then exit 1; fi
+          : > "$work/empty.sqlite"
+          if node "$bin" db:init --db "$work/empty.sqlite"; then exit 1; fi
+          [ ! -s "$work/empty.sqlite" ] || { echo "::error::a refused empty file was written to"; exit 1; }
+
+          # Independent processes, started together against one fresh path. Every racer must
+          # exit cleanly: an earlier revision counted only the creator, so five failures
+          # would have passed.
+          race="$work/racedir/race.sqlite"
+          mkdir -p "$work/racedir"
+          pids=""
+          for i in 1 2 3 4 5 6; do
+            node "$bin" db:init --db "$race" >"$work/race.$i.out" 2>"$work/race.$i.err" &
+            pids="$pids $!"
+          done
+          rc=0
+          for p in $pids; do wait "$p" || rc=1; done
+          [ "$rc" = "0" ] || { echo "::error::a racer exited non-zero"; exit 1; }
+
+          applied=$(cat "$work"/race.*.out | grep -c 'result=applied')
+          already=$(cat "$work"/race.*.out | grep -c 'result=already_at')
+          errbytes=$(cat "$work"/race.*.err | wc -c | tr -d ' ')
+          printf 'race: applied=%s already_at=%s stderr_bytes=%s\n' "$applied" "$already" "$errbytes"
+          [ "$applied" = "1" ] || { echo "::error::the race did not produce exactly one creator"; exit 1; }
+          [ "$already" = "5" ] || { echo "::error::the race did not produce five already_at"; exit 1; }
+          [ "$errbytes" = "0" ] || { echo "::error::a racer wrote to stderr"; exit 1; }
+          # Enumeration failure and "present and empty" are different outcomes. The previous
+          # form piped ls into grep, so ls's exit status was lost and a missing or unreadable
+          # directory produced a count of 0 and passed.
+          if ! entries=$(ls -A "$work/racedir" 2>/dev/null); then
+            echo "::error::could not enumerate the race directory"; exit 1
+          fi
+          leftover=$(printf '%s\n' "$entries" | grep -cvx 'race.sqlite' || true)
+          printf 'race directory leftovers: %s\n' "$leftover"
+          [ "$leftover" = "0" ] || { echo "::error::the race left files beside the target"; printf '%s\n' "$entries"; exit 1; }
+          echo "compiled CLI smoke passed"
