@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, inject } from 'vitest';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync,
@@ -195,6 +195,12 @@ describe('a real interrupt during publication', () => {
      * removed, so the default action stays suppressed for the whole run.
      */
     foreignListener?: string;
+    /** Extra source for that same preload, evaluated before the command starts. */
+    preload?: string;
+    /** Destroys the child's stderr before it runs, so every diagnostic write fails. */
+    closeStderr?: boolean;
+    /** Holds stderr unread, then starts draining this long after the signal: a slow reader. */
+    resumeStderrAfterMs?: number;
   }
 
   function interruptWhileHeld(
@@ -212,9 +218,10 @@ describe('a real interrupt during publication', () => {
       const expired = join(dir, `.expired-${id}`);
 
       // Evaluated before the entry point, and left in place: nothing in the run removes it.
-      const foreign = options.foreignListener === undefined ? [] : ['--import',
-        `data:text/javascript,${encodeURIComponent(
-          `process.on(${JSON.stringify(options.foreignListener)}, () => {});`)}`];
+      const source = (options.foreignListener === undefined ? ''
+        : `process.on(${JSON.stringify(options.foreignListener)}, () => {});`) + (options.preload ?? '');
+      const foreign = source === '' ? []
+        : ['--import', `data:text/javascript,${encodeURIComponent(source)}`];
 
       const child = spawn(
         process.execPath,
@@ -236,6 +243,9 @@ describe('a real interrupt during publication', () => {
       let stderr = '';
       child.stdout.on('data', (c: Buffer) => { stdout += c.toString(); });
       child.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
+      if (options.closeStderr === true) child.stderr.destroy();
+      // Unread stderr fills the pipe, so the command's own writes queue behind whatever is there.
+      if (options.resumeStderrAfterMs !== undefined) child.stderr.pause();
 
       let sawReady = false;
       // The child can exit before a scheduled poll fires; without this the stale poll would run
@@ -252,6 +262,9 @@ describe('a real interrupt during publication', () => {
           };
           if (signal !== null) {
             try { process.kill(child.pid as number, signal as NodeJS.Signals); } catch { /* gone */ }
+          }
+          if (options.resumeStderrAfterMs !== undefined) {
+            setTimeout(() => child.stderr.resume(), options.resumeStderrAfterMs);
           }
           if (options.onHold) await options.onHold(doRelease);
           else doRelease();
@@ -397,6 +410,67 @@ describe('a real interrupt during publication', () => {
     },
     60_000,
   );
+
+  // Round 19. The three cases below cover what the Round 18 repair itself broke or left unproven.
+  // Each names the production line it discriminates for, because a guard that survives deleting
+  // the thing it guards is not evidence.
+
+  // Discriminates: the bounded wait before terminating. Without it the command exits while its
+  // own diagnostics are still queued behind a megabyte the reader has not taken yet, and a
+  // cleanup failure would vanish on the one path that most needs to report it.
+  it('delivers its diagnostics to a backpressured stderr before terminating', async () => {
+    const target = join(dir, 'orchestrator.sqlite');
+    const held = await interruptWhileHeld(target, 'SIGTERM', {
+      foreignListener: 'SIGTERM',
+      preload: "process.stderr.write('x'.repeat(1 << 20));",   // fills the pipe first
+      resumeStderrAfterMs: 300,                                // a slow reader, not an absent one
+    });
+    expectHeldThroughout(held);
+    expect(held.code).toBe(143);
+    expect(held.stderr.endsWith('db:init interrupted=SIGTERM\n')).toBe(true);
+  }, 60_000);
+
+  // Discriminates: the forced exit. A foreign listener that also holds a ref'ed handle keeps the
+  // loop alive, so returning after the re-raise -- the obvious alternative -- hangs here instead.
+  it('exits rather than hanging when a foreign listener also holds the loop open', async () => {
+    const target = join(dir, 'orchestrator.sqlite');
+    const held = await interruptWhileHeld(target, 'SIGTERM', {
+      foreignListener: 'SIGTERM',
+      preload: 'setInterval(() => {}, 60_000);',   // ref'ed: nothing else would end this process
+    });
+    expectHeldThroughout(held);
+    expect(held.code).toBe(143);
+  }, 30_000);
+
+  // Discriminates: the stderr half of the stream-error handling. With it removed the failing
+  // write is an unhandled emitter error, which ends the process with 1 before it can carry the
+  // signal's disposition -- observable through the exit even though stderr itself is gone.
+  it('keeps the interrupt disposition when stderr is the closed pipe', async () => {
+    const target = join(dir, 'orchestrator.sqlite');
+    const held = await interruptWhileHeld(target, 'SIGTERM', { closeStderr: true });
+    expectHeldThroughout(held);
+    expect(held.signal).toBe('SIGTERM');
+    expect(held.code).toBeNull();
+    expect(readdirSync(dir).filter((n) => n.includes('.dev-orch-init-'))).toEqual([]);
+    expect(existsSync(target)).toBe(true);
+  }, 30_000);
+
+  // Discriminates: raising each shared emitter's ceiling for what this command adds. An embedder
+  // already at the default limit turned the command's own registration into a Node warning --
+  // process id, and under --trace-warnings a native stack and this file's absolute path -- which
+  // is the leak `fail` exists to prevent, arriving before any database work.
+  it('registers its listeners without warning on an emitter another program has filled', () => {
+    const saturate = ['stdout', 'stderr']
+      .map((s) => `for (let i = 0; i < process.${s}.getMaxListeners(); i += 1)`
+        + ` process.${s}.on('error', () => {});`).join('');
+    const seen = spawnSync(process.execPath, [
+      '--trace-warnings', '--import', `data:text/javascript,${encodeURIComponent(saturate)}`,
+      CLI, 'db:init', '--db', join(dir, 'orchestrator.sqlite'),
+    ], { encoding: 'utf8' });
+    expect(seen.status).toBe(0);
+    expect(seen.stdout).toContain('result=applied');
+    expect(seen.stderr).toBe('');
+  });
 
   it('still reports an ordinary success when no signal is sent', () => {
     const target = join(dir, 'orchestrator.sqlite');

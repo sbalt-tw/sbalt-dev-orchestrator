@@ -79,6 +79,11 @@ const SIGNAL_EXIT: Record<InterruptSignal, number> = {
   SIGQUIT: 128 + constants.signals.SIGQUIT,
 };
 
+// How long an interrupted run waits for its own diagnostics to reach a backpressured stderr before
+// terminating anyway. Long enough for a slow reader, short enough that a reader which never reads
+// cannot hold an interrupted command open.
+const DIAGNOSTIC_FLUSH_LIMIT_MS = 2_000;
+
 type Executed =
   | { readonly ok: true; readonly outcome: ReturnType<typeof initialise> }
   | { readonly ok: false; readonly code: ReasonCode };
@@ -125,6 +130,12 @@ export function run(argv: readonly string[]): number {
  */
 function absorbOutputStreamFailures(): void {
   for (const stream of [process.stdout, process.stderr]) {
+    // Round 19: adding to a shared emitter that an embedder has already filled to its ceiling made
+    // Node print MaxListenersExceededWarning — process id and all, and under --trace-warnings a
+    // native stack and this file's absolute path — which is exactly the diagnostic leak `fail`
+    // exists to prevent, arriving before any database work. Raising the ceiling by the one
+    // listener being added keeps that quiet without hiding a real accumulation elsewhere.
+    stream.setMaxListeners(stream.getMaxListeners() + 1);
     stream.on('error', () => {
       process.exitCode = 1;
     });
@@ -200,6 +211,8 @@ function absorbOutputStreamFailures(): void {
 export async function main(): Promise<void> {
   absorbOutputStreamFailures();
   let interrupted: InterruptSignal | null = null;
+  // Signal registration has the same ceiling, and the same consequence if an embedder is at it.
+  process.setMaxListeners(process.getMaxListeners() + 1);
   const installed = INTERRUPT_SIGNALS.map((signal) => {
     // The first signal wins; a repeated Ctrl-C changes nothing and starts no second teardown.
     const handler = (): void => {
@@ -221,7 +234,20 @@ export async function main(): Promise<void> {
   if (interrupted !== null) {
     // A primary failure keeps its own reason code; the interruption is reported alongside it.
     if (!result.ok) fail(result.code);
-    process.stderr.write(`db:init interrupted=${interrupted}\n`);
+
+    // Round 19: neither of the two ways this ends waits for stderr. Termination by signal is
+    // immediate, and process.exit does not flush an asynchronous stdio pipe — so against a
+    // backpressured stderr the diagnostics were simply discarded: measured exit 143 with neither
+    // the reason code nor the interrupt line emitted, which would hide a cleanup failure on the
+    // one path that most needs to report it. Writes are ordered, so waiting on this one waits for
+    // the reason code ahead of it too. The wait is bounded because a reader that never reads
+    // cannot be made to, and no listener is attached here: an unwritable stderr must stay
+    // observable to the handler installed above, not be quietly absorbed by this wait.
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, DIAGNOSTIC_FLUSH_LIMIT_MS);
+      timer.unref();
+      process.stderr.write(`db:init interrupted=${interrupted}\n`, () => { clearTimeout(timer); resolve(); });
+    });
     uninstall();
 
     // Re-raising is how the exit normally carries the disposition that was sent: with this

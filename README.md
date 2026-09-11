@@ -222,6 +222,11 @@ signal, which does nothing while any other listener for it is attached — a pre
 embedder — so an interrupted run could exit 0. The exit is now decided rather than inferred: death
 by signal where the default action applies, and otherwise the conventional `128 + signal` code.
 
+Round 19: neither of those endings waited for stderr, so against a backpressured pipe an
+interrupted run discarded its own reason code and interrupt line — measured. It now waits up to
+two seconds for them before terminating. A slow reader therefore sees them; a reader that never
+reads at all still does not, and cannot be made to, so that much is stated rather than fixed.
+
 **Output that cannot be written is a fixed, silent failure.** If the consumer closes the pipe
 before the line is written — `dev-orch db:init … | head -1`, a reader that was killed — the write
 fails with EPIPE. Round 18: that was an unhandled stream error, so it surfaced as a native stack
